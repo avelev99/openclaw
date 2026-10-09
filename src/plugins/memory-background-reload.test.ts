@@ -166,6 +166,7 @@ it("retires live watchers and starts successor indexing without a search or turn
     memory: {
       search: {
         provider: "none",
+        rememberAcrossConversations: false,
         sources: ["memory"],
         store: { vector: { enabled: false } },
       },
