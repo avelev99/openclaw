@@ -196,6 +196,7 @@ export function createHarness(
   const { attached, destroyedEnvironment, environmentId, ready } =
     createDispatchEnvironmentFixtures(options.environmentGeneration);
   let currentEnvironment: ReturnType<WorkerDispatchEnvironmentService["get"]> = ready;
+  const stoppedTunnelEnvironments = new Set<string>();
   const setEnvironment = (environment: NonNullable<typeof currentEnvironment>) => {
     currentEnvironment = environment;
     writePlacementEnvironmentFixture(database, environment);
@@ -400,11 +401,16 @@ export function createHarness(
       if (ownerEpoch !== currentEnvironment?.ownerEpoch) {
         throw new Error("tunnel fixture received a stale owner epoch");
       }
+      stoppedTunnelEnvironments.delete(environmentId);
       return tunnelHandle(ownerEpoch);
     }),
-    stopTunnel: vi.fn(async () => {
+    stopTunnel: vi.fn<WorkerDispatchEnvironmentService["stopTunnel"]>(async (id) => {
+      if (stoppedTunnelEnvironments.has(id)) {
+        return;
+      }
       log.push("teardown:stop");
       await options.afterStopTunnel?.();
+      stoppedTunnelEnvironments.add(id);
     }),
     destroy: vi.fn<WorkerDispatchEnvironmentService["destroy"]>(
       async (_environmentId, _abandonment, forceAbandon) => {
@@ -428,10 +434,14 @@ export function createHarness(
         return destroyed;
       },
     ),
-    requestDestroy: async (...args) => {
-      await environments.stopTunnel(args[0]);
-      return environments.destroy(...args);
-    },
+    requestDestroy: vi.fn(
+      async (...args: Parameters<WorkerDispatchEnvironmentService["requestDestroy"]>) => {
+        if (!stoppedTunnelEnvironments.has(args[0])) {
+          await environments.stopTunnel(args[0]);
+        }
+        return environments.destroy(...args);
+      },
+    ),
     reconcileOnce: vi.fn(async () => {
       log.push("environment:reconcile");
     }),

@@ -104,7 +104,7 @@ describe("worker placement restart recovery", () => {
   });
 
   it.each(["startup", "active"] as const)(
-    "does not report successful reclaim while provider-loss teardown is pending during %s recovery",
+    "returns the session locally while provider-loss teardown remains pending during %s recovery",
     async (mode) => {
       support.testState.prepareInstallation = vi.fn(async () => ({
         ...support.BUNDLE_ARTIFACT,
@@ -154,17 +154,17 @@ describe("worker placement restart recovery", () => {
       expect.soft(destroy).toHaveBeenCalledOnce();
 
       destroy.mockClear();
-      await expect(recovery.reclaim(REQUEST)).rejects.toThrow("provider deletion unavailable");
-      expect(destroy).toHaveBeenCalledOnce();
-      expect(placements.get(REQUEST.sessionId)).toMatchObject({
-        state: "failed",
-        environmentId: ready.environmentId,
-        recoveryError: expect.stringContaining("teardown failed"),
+      await expect(recovery.reclaim(REQUEST)).resolves.toMatchObject({ state: "reclaimed" });
+      expect(destroy).not.toHaveBeenCalled();
+      expect(environments.get(ready.environmentId)).toMatchObject({
+        state: "destroying",
+        leaseId: ready.leaseId,
       });
 
-      destroy.mockClear().mockResolvedValue(undefined);
-      await expect(recovery.reclaim(REQUEST)).resolves.toMatchObject({ state: "local" });
+      destroy.mockResolvedValue(undefined);
+      await environments.reconcileOnce(ready.environmentId);
       expect(destroy).toHaveBeenCalledOnce();
+      expect(placements.get(REQUEST.sessionId)).toMatchObject({ state: "reclaimed" });
       expect(environments.get(ready.environmentId)).toMatchObject({
         state: "failed",
         leaseId: null,
@@ -205,7 +205,7 @@ describe("worker placement restart recovery", () => {
         activeOwnerEpoch: environment.ownerEpoch,
         recoveryError: expect.stringContaining("node role revoked before stop confirmation"),
       });
-      expect(harness.environments.destroy).toHaveBeenCalledWith(environment.environmentId);
+      expect(harness.environments.requestDestroy).toHaveBeenCalledWith(environment.environmentId);
       expect(harness.environments.startTunnel).not.toHaveBeenCalled();
     },
   );
@@ -281,7 +281,7 @@ describe("worker placement restart recovery", () => {
       recoveryError: expect.stringContaining(scenario.expectedError),
     });
     expect(harness.environments.startTunnel).not.toHaveBeenCalled();
-    expect(harness.environments.destroy).toHaveBeenCalledWith(environment.environmentId);
+    expect(harness.environments.requestDestroy).toHaveBeenCalledWith(environment.environmentId);
     expect(harness.log).not.toContain("placement:adopted");
   });
 
@@ -444,7 +444,7 @@ describe("worker placement restart recovery", () => {
     });
     expect(harness.environments.attachSession).not.toHaveBeenCalled();
     expect(harness.environments.startTunnel).not.toHaveBeenCalled();
-    expect(harness.environments.destroy).toHaveBeenCalledWith(environment.environmentId);
+    expect(harness.environments.requestDestroy).toHaveBeenCalledWith(environment.environmentId);
   });
 
   it("fails a placement interrupted before its environment intent and permits redispatch", async () => {

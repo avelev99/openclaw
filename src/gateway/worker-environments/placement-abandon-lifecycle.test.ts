@@ -163,6 +163,9 @@ describe("offline device abandonment with retained physical cleanup", () => {
       };
       vi.mocked(harness.environments.get).mockImplementation(service.get);
       vi.mocked(harness.environments.destroy).mockImplementation(service.destroy);
+      vi.mocked(harness.environments.requestDestroy).mockImplementation((...args) =>
+        service.requestDestroy(...args),
+      );
       vi.mocked(harness.environments.stopTunnel).mockImplementation(service.stopTunnel);
       await tunnels.start({
         environmentId,

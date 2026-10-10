@@ -218,10 +218,10 @@ describe("worker placement dispatch reclaim", () => {
       "workspace:lease",
       "workspace:verify",
       "workspace:verify-local",
+      "teardown:stop",
       "teardown:destroy",
       "placement:reconciling",
       "placement:reclaimed",
-      "teardown:stop",
     ]);
   });
 

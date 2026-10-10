@@ -653,28 +653,16 @@ it.each([
   },
 );
 
-it.each([
-  { advance: "cleanup", targetKind: "gateway" },
-  { advance: "completed", targetKind: "gateway" },
-  { advance: "replacement", targetKind: "gateway" },
-  { advance: "cleanup", targetKind: "profile" },
-  { advance: "cleanup", targetKind: "device" },
-] as const)(
-  "Stop retains captured Move completion across cancellation loading ($advance, $targetKind)",
-  async ({ advance, targetKind }) => {
+it.each(["completed", "replacement"] as const)(
+  "Stop retains captured Move completion across cancellation loading (%s)",
+  async (advance) => {
     const reconciling = createDeferredCore();
     const reconciled = createDeferredCore();
-    const cleaning = createDeferredCore();
-    const cleaned = createDeferredCore();
     const f = await cancellationLoadFixture({
       runMoveBarrier: async (request) => await barrier(request),
       afterReconcile: async () => {
         reconciling.resolve();
         await reconciled.promise;
-      },
-      afterStopTunnel: async () => {
-        cleaning.resolve();
-        await cleaned.promise;
       },
     });
     const barrier = createGatewayWorkerPlacementMoveBarrier({
@@ -696,12 +684,7 @@ it.each([
             environmentId: active.environmentId,
             ownerEpoch: active.activeOwnerEpoch,
           },
-          target:
-            targetKind === "profile"
-              ? { kind: "profile", profileId: "destination-profile" }
-              : targetKind === "device"
-                ? { kind: "device", deviceId: "destination-device" }
-                : { kind: "gateway" },
+          target: { kind: "gateway" },
         },
         (placement) => {
           if (placement.state === "local") {
@@ -719,17 +702,7 @@ it.each([
     expect(f.placements.get(REQUEST.sessionId)?.state).toBe("draining");
     f.cancellationStarted.mockClear();
     f.armCancellation();
-    let stopped = false;
-    const stopping = f.coordinated.reclaim(REQUEST).then(
-      (result) => {
-        stopped = true;
-        return result;
-      },
-      (error: unknown) => {
-        stopped = true;
-        return error;
-      },
-    );
+    const stopping = f.coordinated.reclaim(REQUEST).catch((error: unknown) => error);
     try {
       await Promise.race([
         f.loading.promise,
@@ -738,17 +711,8 @@ it.each([
         }),
       ]);
       reconciled.resolve();
-      await Promise.race([
-        cleaning.promise,
-        moving.then(() => {
-          throw new Error("Move completed before cleanup hold");
-        }),
-      ]);
+      expect.soft(await moving).toMatchObject({ state: "local" });
       expect(f.placements.get(REQUEST.sessionId)?.state).toBe("local");
-      if (advance !== "cleanup") {
-        cleaned.resolve();
-        expect.soft(await moving).toMatchObject({ state: "local" });
-      }
       if (advance === "replacement") {
         await f.placements.startDispatch(REQUEST);
       }
@@ -756,11 +720,6 @@ it.each([
       if (advance !== "replacement") {
         await f.waitForCancellationStart(stopping);
       }
-      if (advance === "cleanup") {
-        expect(f.cancellationStarted).toHaveBeenCalled();
-        expect(stopped).toBe(false);
-      }
-      cleaned.resolve();
       const result = await stopping;
       if (advance === "replacement") {
         expect(result).toBeInstanceOf(Error);
@@ -779,7 +738,6 @@ it.each([
       }
     } finally {
       reconciled.resolve();
-      cleaned.resolve();
       f.loaded.resolve();
       await Promise.all([moving, stopping]);
       f.context.chatRunState.clear();

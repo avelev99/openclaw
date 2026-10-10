@@ -245,7 +245,7 @@ describe("worker placement shutdown replay", () => {
         },
       });
       const environments = support.createService(provider);
-      const destroy = vi.spyOn(environments, "destroy");
+      const destroy = vi.spyOn(environments, "requestDestroy");
       const placements = createWorkerSessionPlacementStore({ database: support.testState.stateDb });
       const dispatch = createRecoveryService(placements, environments, () => shutdown);
 

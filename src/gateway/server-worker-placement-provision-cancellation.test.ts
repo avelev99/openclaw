@@ -760,10 +760,10 @@ describe("dispatch Stop before provider allocation", () => {
       try {
         if (reason === "archived-behind-same-session-destroy") {
           await setImmediate();
-          expect(destroy).toHaveBeenCalledExactlyOnceWith({
-            leaseId: "lease:environment-prior-exclusive",
-            profile: { region: "test" },
-          });
+          expect(destroy).toHaveBeenCalledExactlyOnceWith(
+            { leaseId: "lease:environment-prior-exclusive", profile: { region: "test" } },
+            { onPhase: expect.any(Function) },
+          );
           expect(settled).toBe(false);
           releaseExclusive.resolve();
           await exclusive;
@@ -781,7 +781,12 @@ describe("dispatch Stop before provider allocation", () => {
           expect(settled).toBe(false);
           expect(
             destroy.mock.calls.filter(([lease]) => lease.leaseId === environment.leaseId),
-          ).toEqual([[{ leaseId: environment.leaseId, profile: { region: "test" } }]]);
+          ).toEqual([
+            [
+              { leaseId: environment.leaseId, profile: { region: "test" } },
+              { onPhase: expect.any(Function) },
+            ],
+          ]);
           const interruption = startSessionWorkAdmissionInterruption({
             scope: `${support.testState.root}/sessions.sqlite`,
             identities: [REQUEST.sessionKey, REQUEST.sessionId],
@@ -795,6 +800,7 @@ describe("dispatch Stop before provider allocation", () => {
           releaseDestroy.resolve();
           await recovery;
           await interruption.released;
+          await environments.destroy(environment.environmentId);
           expect(placements.get(REQUEST.sessionId)).toMatchObject({
             state: "failed",
             environmentId: environment.environmentId,
@@ -984,6 +990,7 @@ describe("dispatch Stop before provider allocation", () => {
         await uninstallGuard();
       }
       expect(await stopping).toMatchObject({ state: "local" });
+      await environments.destroy(intent.environmentId);
       expect(events).toEqual(
         mode === "idle" || mode === "late-sweep"
           ? ["destroy"]

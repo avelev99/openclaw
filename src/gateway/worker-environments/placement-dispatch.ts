@@ -391,7 +391,15 @@ export function createWorkerPlacementDispatchService(options: WorkerPlacementDis
             if (failed?.state !== "failed") {
               throw new Error("Failed cloud worker placement changed during reclaim");
             }
+            const environment = failed.environmentId
+              ? environments.get(failed.environmentId)
+              : undefined;
+            const teardownAccepted =
+              environment?.state === "destroying" &&
+              environment.destroyRequestedAtMs !== null &&
+              environment.attachedSessionIds.length === 0;
             if (
+              !teardownAccepted &&
               !isFailedWorkerPlacementEnvironmentGone({
                 environmentService: environments,
                 placement: failed,

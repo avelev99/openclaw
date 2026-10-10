@@ -221,6 +221,7 @@ describe("on-demand prepared worker admission", () => {
       } finally {
         release.resolve();
         await destroyed;
+        await f.service.destroy(environmentId);
       }
       expect(support.testState.store.get(environmentId)?.state).toBe("destroyed");
       expect(destroyProvider).toHaveBeenCalledOnce();

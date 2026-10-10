@@ -191,6 +191,7 @@ describe("Crabbox allocation through Gateway ownership", () => {
             idempotencyKey: "checkpoint-source",
           });
           await service.destroyUnattached(seed.environmentId);
+          await service.destroy(seed.environmentId);
         }
         runner.mockClear();
         pauseLookup = true;

@@ -252,163 +252,127 @@ describe("worker placement result recovery", () => {
     ).not.toBe(0);
   });
 
-  it.each(["retained", "removed-before-restart"] as const)(
-    "keeps an accepted result fenced until provider deletion succeeds (%s ref)",
-    async (refState) => {
-      const workspacePath = path.join(root, "accepted-result-cleanup");
-      const publishAcceptedWorkspace = vi.fn(async () => undefined);
-      const fixtureHarness = createHarness(database, placementStore, { workspacePath });
-      const fixtureStart = vi
-        .mocked(fixtureHarness.environments.startTunnel)
-        .getMockImplementation()!;
-      const tunnels = createWorkerTunnelManager();
-      let claim: Awaited<ReturnType<PlacementStore["claimTurn"]>> | undefined;
-      vi.spyOn(tunnels, "start").mockImplementation(async (request) => ({
-        ...(await fixtureStart(request)),
-        reconcileWorkspace: async ({ source }) => {
-          if (source.kind !== "local") {
-            throw new Error("expected a local workspace source");
-          }
-          const owned = placementStore.get(REQUEST.sessionId);
-          if (owned?.state !== "draining" || !owned.turnClaim) {
-            throw new Error("reclaim fixture lost its claim");
-          }
-          claim = {
-            sessionId: owned.sessionId,
-            claimId: owned.turnClaim.claimId,
-            runId: owned.turnClaim.runId,
-            placementGeneration: owned.turnClaim.generation,
-            owner: placementTurnOwner(owned),
-          };
-          const staged = await stagePendingResult({
-            store: placementStore,
-            claim,
-            workspacePath,
-            base: "base\n",
-            current: "worker\n",
-          });
-          const applied = await applyStagedWorkerWorkspaceResult({
-            root: workspacePath,
-            stagedResultRef: staged.stagedResultRef,
-            expectedBaseManifestRef: staged.baseManifestRef,
-            journal: source.journal,
-          });
-          return {
-            ...applied,
-            verifyStable: async () => {},
-            publishStagedResult: async () => {},
-            discardPreparedStagedResult: async () => {},
-            getAppliedWorkspaceResult: () => applied,
-          };
-        },
-      }));
-      const destroy = vi.fn(async (): Promise<void> => {
-        throw new Error("provider deletion unavailable");
-      });
-      support.testState.prepareInstallation = async () => ({
-        ...support.BUNDLE_ARTIFACT,
-        protocolFeatures: [
-          WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE,
-          WORKER_EXECUTION_AUTHORITY_PROTOCOL_FEATURE,
-        ],
-      });
-      const environments = support.createService(support.createProvider({ destroy }), {
-        tunnelManager: tunnels,
-        placementStore: createWorkerSessionPlacementGate(placementStore),
-      });
-      const ready = await environments.createWithRequest({
-        profileId: "development",
-        idempotencyKey: "session-dispatch:session-1:1",
-        executionMode: "remote-exec",
-      });
-      const attached = await environments.attachSession({
-        environmentId: ready.environmentId,
-        ownerEpoch: ready.ownerEpoch,
-        sessionId: REQUEST.sessionId,
-      });
-      await seedActivePlacement(placementStore, {
-        environmentId: ready.environmentId,
-        ownerEpoch: attached.ownerEpoch,
-        executionMode: "remote-exec",
-      });
-      fixtureHarness.markEnvironmentOwnerEpoch(attached.ownerEpoch);
-      const harness = createHarness(database, placementStore, {
-        workspacePath,
-        publishAcceptedWorkspace,
-        environmentService: environments,
-      });
-
-      await expect(harness.service.reclaim(REQUEST)).rejects.toThrow(
-        "provider deletion unavailable",
-      );
-      expect(environments.get(ready.environmentId)).toMatchObject({
-        state: "destroying",
-        ownerEpoch: attached.ownerEpoch + 1,
-        destroyRequestedAtMs: 1_000,
-        leaseId: ready.leaseId,
-      });
-      const [pending] = await placementStore.listPendingWorkspaceResultsAsync();
-      expect(pending).toMatchObject({ workspaceAcceptedAtMs: 1_000 });
-      if (!pending?.stagedResultRef) {
-        throw new Error("reclaim fixture did not retain its staged result");
-      }
-      let recovery = harness;
-      if (refState === "removed-before-restart") {
-        expect(
-          await runCommandWithTimeout(
-            [
-              "git",
-              "-C",
-              workspacePath,
-              "update-ref",
-              "-d",
-              cleanupWorkerWorkspaceResultRef(pending.stagedResultRef),
-            ],
-            { timeoutMs: 10_000 },
-          ),
-        ).toMatchObject({ code: 0 });
-        const restartedStore = createWorkerSessionPlacementStore({ database, now: () => 2_000 });
-        restartedStore.clearLocalTurnClaimsAfterRestart();
-        recovery = createHarness(database, restartedStore, {
+  it("publishes an accepted result once while failed provider deletion settles separately", async () => {
+    const workspacePath = path.join(root, "accepted-result-cleanup");
+    const publishStagedResult = vi.fn(async () => undefined);
+    const fixtureHarness = createHarness(database, placementStore, { workspacePath });
+    const fixtureStart = vi
+      .mocked(fixtureHarness.environments.startTunnel)
+      .getMockImplementation()!;
+    const tunnels = createWorkerTunnelManager();
+    let claim: Awaited<ReturnType<PlacementStore["claimTurn"]>> | undefined;
+    vi.spyOn(tunnels, "start").mockImplementation(async (request) => ({
+      ...(await fixtureStart(request)),
+      reconcileWorkspace: async ({ source }) => {
+        if (source.kind !== "local") {
+          throw new Error("expected a local workspace source");
+        }
+        const owned = placementStore.get(REQUEST.sessionId);
+        if (owned?.state !== "draining" || !owned.turnClaim) {
+          throw new Error("reclaim fixture lost its claim");
+        }
+        claim = {
+          sessionId: owned.sessionId,
+          claimId: owned.turnClaim.claimId,
+          runId: owned.turnClaim.runId,
+          placementGeneration: owned.turnClaim.generation,
+          owner: placementTurnOwner(owned),
+        };
+        const staged = await stagePendingResult({
+          store: placementStore,
+          claim,
           workspacePath,
-          publishAcceptedWorkspace,
-          environmentService: environments,
+          base: "base\n",
+          current: "worker\n",
         });
+        const applied = await applyStagedWorkerWorkspaceResult({
+          root: workspacePath,
+          stagedResultRef: staged.stagedResultRef,
+          expectedBaseManifestRef: staged.baseManifestRef,
+          journal: source.journal,
+        });
+        return {
+          ...applied,
+          verifyStable: async () => {},
+          publishStagedResult,
+          discardPreparedStagedResult: async () => {},
+          getAppliedWorkspaceResult: () => applied,
+        };
+      },
+    }));
+    const destroy = vi.fn(async (): Promise<void> => {
+      throw new Error("provider deletion unavailable");
+    });
+    support.testState.prepareInstallation = async () => ({
+      ...support.BUNDLE_ARTIFACT,
+      protocolFeatures: [
+        WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE,
+        WORKER_EXECUTION_AUTHORITY_PROTOCOL_FEATURE,
+      ],
+    });
+    const environments = support.createService(support.createProvider({ destroy }), {
+      tunnelManager: tunnels,
+      placementStore: createWorkerSessionPlacementGate(placementStore),
+    });
+    const ready = await environments.createWithRequest({
+      profileId: "development",
+      idempotencyKey: "session-dispatch:session-1:1",
+      executionMode: "remote-exec",
+    });
+    const attached = await environments.attachSession({
+      environmentId: ready.environmentId,
+      ownerEpoch: ready.ownerEpoch,
+      sessionId: REQUEST.sessionId,
+    });
+    await seedActivePlacement(placementStore, {
+      environmentId: ready.environmentId,
+      ownerEpoch: attached.ownerEpoch,
+      executionMode: "remote-exec",
+    });
+    fixtureHarness.markEnvironmentOwnerEpoch(attached.ownerEpoch);
+    const harness = createHarness(database, placementStore, {
+      workspacePath,
+      environmentService: environments,
+    });
+    const failureCommitted = createDeferred();
+    const recordError = support.testState.store.recordError.bind(support.testState.store);
+    vi.spyOn(support.testState.store, "recordError").mockImplementation(async (input) => {
+      const record = await recordError(input);
+      if (input.environmentId === ready.environmentId) {
+        failureCommitted.resolve();
       }
+      return record;
+    });
 
-      destroy.mockClear();
-      await recovery.service.reconcileActive(ready.environmentId);
-      expect(destroy).toHaveBeenCalledOnce();
-      expect(recovery.placements.current()).toMatchObject({
-        state: "draining",
-        environmentId: ready.environmentId,
-        activeOwnerEpoch: attached.ownerEpoch,
-        turnClaim:
-          refState === "retained"
-            ? expect.objectContaining({ claimId: pending.claimId, runId: pending.runId })
-            : null,
-      });
+    await expect(harness.service.reclaim(REQUEST)).resolves.toMatchObject({ state: "reclaimed" });
+    await failureCommitted.promise;
+    expect(environments.get(ready.environmentId)).toMatchObject({
+      state: "destroying",
+      destroyRequestedAtMs: 1_000,
+      leaseId: ready.leaseId,
+      error: "provider deletion unavailable",
+    });
+    expect(harness.placements.current()).toMatchObject({
+      state: "reclaimed",
+      turnClaim: null,
+    });
+    expect(await placementStore.listPendingWorkspaceResultsAsync()).toEqual([]);
+    expect(publishStagedResult).toHaveBeenCalledOnce();
+    expect(destroy).toHaveBeenCalledOnce();
+    await expect(fs.readFile(path.join(workspacePath, "result.txt"), "utf8")).resolves.toBe(
+      "worker\n",
+    );
 
-      await expect(recovery.service.reclaim(REQUEST)).rejects.toThrow(
-        refState === "retained"
-          ? "cannot stop cloud worker"
-          : "Active cloud worker does not match its session placement",
-      );
-      expect(await placementStore.listPendingWorkspaceResultsAsync()).toMatchObject([pending]);
-      destroy.mockClear().mockResolvedValue(undefined);
-      await recovery.service.reconcileActive(ready.environmentId);
-      expect(destroy).toHaveBeenCalledOnce();
-      await expect(recovery.service.reclaim(REQUEST)).resolves.toMatchObject({
-        state: "reclaimed",
-      });
-      expect(environments.get(ready.environmentId)?.state).toBe("destroyed");
-      expect(publishAcceptedWorkspace).toHaveBeenCalledWith(claim);
-      expect(await placementStore.listPendingWorkspaceResultsAsync()).toEqual([]);
-      await expect(fs.readFile(path.join(workspacePath, "result.txt"), "utf8")).resolves.toBe(
-        "worker\n",
-      );
-    },
-  );
+    destroy.mockResolvedValue(undefined);
+    await environments.reconcileOnce(ready.environmentId);
+    expect(destroy).toHaveBeenCalledTimes(2);
+    expect(environments.get(ready.environmentId)?.state).toBe("destroyed");
+    expect(publishStagedResult).toHaveBeenCalledOnce();
+    expect(await placementStore.listPendingWorkspaceResultsAsync()).toEqual([]);
+    await expect(fs.readFile(path.join(workspacePath, "result.txt"), "utf8")).resolves.toBe(
+      "worker\n",
+    );
+  });
 
   it("does not destroy the worker while a nested session operation is running", async () => {
     const workspacePath = path.join(root, "running-session-operation");

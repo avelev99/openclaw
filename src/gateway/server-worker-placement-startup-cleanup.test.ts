@@ -369,10 +369,10 @@ describe("worker placement startup cleanup ownership", () => {
       expect(provision).not.toHaveBeenCalled();
       expect(workerEnvironmentSupport.testState.prepareInstallation).not.toHaveBeenCalled();
       expect(workerEnvironmentSupport.testState.bootstrapWorker).not.toHaveBeenCalled();
-      expect(destroy).toHaveBeenCalledExactlyOnceWith({
-        leaseId: "lease-startup-adopted",
-        profile: { region: "test" },
-      });
+      expect(destroy).toHaveBeenCalledExactlyOnceWith(
+        { leaseId: "lease-startup-adopted", profile: { region: "test" } },
+        { onPhase: expect.any(Function) },
+      );
       expect(workerEnvironmentSupport.testState.store.get(environmentId)).toMatchObject({
         state: "destroyed",
         leaseId: "lease-startup-adopted",
