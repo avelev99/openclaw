@@ -127,4 +127,5 @@ export type WorkerProviderLifecycleOptions = Omit<
   ) => Promise<WorkerEnvironmentRecord>;
   saveError: (record: WorkerEnvironmentRecord, error: unknown) => Promise<WorkerEnvironmentRecord>;
   withLock: <T>(environmentId: string, task: () => Promise<T>) => Promise<T>;
+  onTeardownPhase: (environmentId: string, phase: "capturing" | "stopping" | undefined) => void;
 };

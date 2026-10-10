@@ -146,9 +146,8 @@ describe("Crabbox idle image maintenance", () => {
       expect(store.entries().filter(({ value }) => value.captureUnsupported)).toHaveLength(127);
       expect(store.entries().some(({ value }) => value.allocations[lease.leaseId])).toBe(true);
       expect(
-        calls.filter(({ argv }) => argv[2] === "delete").map(({ argv }) => argv.slice(1)),
+        calls.filter(({ argv }) => argv[1] === "checkpoint").map(({ argv }) => argv.slice(1)),
       ).toEqual(withImage ? [["checkpoint", "delete", "chk_refused_0"]] : []);
-      expect(calls.filter(({ argv }) => argv[2] === "create")).toHaveLength(1);
     },
   );
 

@@ -92,7 +92,7 @@ describe("worker turn launcher failure recovery", () => {
         teardownStarted.resolve();
         await finishTeardown.promise;
       },
-      destroy: vi.fn(async () => environment),
+      requestDestroy: vi.fn(async () => environment),
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
     const uninstall = installSessionPlacementAdmissionProvider(provider);
@@ -146,10 +146,10 @@ describe("worker turn launcher failure recovery", () => {
         turnClaim: null,
         terminalReason: expect.stringContaining("worker admission deadline exceeded"),
       });
-      expect(environments.destroy).not.toHaveBeenCalled();
+      expect(environments.requestDestroy).not.toHaveBeenCalled();
       finishTeardown.reject(new Error("late tunnel cleanup rejection"));
       await Promise.resolve();
-      expect(environments.destroy).not.toHaveBeenCalled();
+      expect(environments.requestDestroy).not.toHaveBeenCalled();
     } finally {
       finishLaunch.resolve();
       finishTeardown.resolve();
@@ -184,7 +184,7 @@ describe("worker turn launcher failure recovery", () => {
           teardownStarted.resolve();
           await finishTeardown.promise;
         },
-        destroy,
+        requestDestroy: destroy,
       },
       placements,
       placement: active,
@@ -271,7 +271,7 @@ describe("worker turn launcher failure recovery", () => {
           teardownStarted.resolve();
           await finishTeardown.promise;
         },
-        destroy: async () => attachedEnvironment(),
+        requestDestroy: async () => attachedEnvironment(),
       },
       placements,
       placement: active,
@@ -350,7 +350,7 @@ describe("worker turn launcher failure recovery", () => {
       const destroy = vi.fn(async () => attachedEnvironment());
 
       await failHandedOffTurn({
-        environments: { ...unusedEnvironments(), stopTunnel, destroy },
+        environments: { ...unusedEnvironments(), stopTunnel, requestDestroy: destroy },
         placements,
         placement: active,
         turnClaim,
@@ -384,7 +384,7 @@ describe("worker turn launcher failure recovery", () => {
         });
       }),
       stopTunnel,
-      destroy,
+      requestDestroy: destroy,
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
     const runLocal = vi.fn(async () => ({ meta: { durationMs: 1 } }));
@@ -457,7 +457,7 @@ describe("worker turn launcher failure recovery", () => {
       acknowledgeCredentialDelivery,
       startTunnel,
       stopTunnel,
-      destroy,
+      requestDestroy: destroy,
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
     const runLocal = vi.fn(async () => ({ meta: { durationMs: 1 } }));
@@ -563,7 +563,7 @@ describe("worker turn launcher failure recovery", () => {
     expect(placements.get(SESSION_ID)).toMatchObject({ state: "active", turnClaim: null });
     expect(await placements.listWorkspaceReconciliationOwners()).toEqual([owner]);
     expect(environments.acquireTurnCredential).not.toHaveBeenCalled();
-    expect(environments.destroy).not.toHaveBeenCalled();
+    expect(environments.requestDestroy).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -601,7 +601,7 @@ describe("worker turn launcher failure recovery", () => {
         }),
       ),
       stopTunnel,
-      destroy,
+      requestDestroy: destroy,
     };
     const provider = createWorkerSessionTurnPlacementProvider({
       environments,
@@ -667,7 +667,7 @@ describe("worker turn launcher failure recovery", () => {
         }),
       ),
       stopTunnel,
-      destroy,
+      requestDestroy: destroy,
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
     const failurePrefix = "Cloud worker process failed before completing the turn: ";

@@ -321,7 +321,7 @@ describe("worker turn launcher terminal results", () => {
         }),
         acknowledgeCredentialDelivery: vi.fn(async () => true),
         startTunnel: vi.fn(async () => tunnel),
-        destroy: vi.fn(async () => environment),
+        requestDestroy: vi.fn(async () => environment),
       };
       const reconcileActivePlacement = vi.fn(async () => {
         const [pending] = await placements.listPendingWorkspaceResultsAsync();
@@ -425,7 +425,7 @@ describe("worker turn launcher terminal results", () => {
           });
           expect(placements.get(SESSION_ID)).toMatchObject({ state: "active", turnClaim: null });
           expect(await placements.listPendingWorkspaceResultsAsync()).toHaveLength(0);
-          expect(environments.destroy).not.toHaveBeenCalled();
+          expect(environments.requestDestroy).not.toHaveBeenCalled();
           if (providerFailure) {
             expect(launchedModels).toEqual(["gpt-5.6-luna", "gpt-5.6-sol"]);
             expect(runCandidate).toHaveBeenCalledTimes(2);
@@ -462,7 +462,7 @@ describe("worker turn launcher terminal results", () => {
           turnClaim: null,
         });
         expect(await placements.listPendingWorkspaceResultsAsync()).toHaveLength(0);
-        expect(environments.destroy).not.toHaveBeenCalled();
+        expect(environments.requestDestroy).not.toHaveBeenCalled();
         await expect(
           service.pushLiveEvent(identity!, {
             runEpoch: OWNER_EPOCH,
@@ -572,7 +572,7 @@ describe("worker turn launcher terminal results", () => {
       acquireTurnCredential: vi.fn(async () => credential()),
       acknowledgeCredentialDelivery: vi.fn(async () => true),
       startTunnel: vi.fn(async () => tunnel),
-      destroy,
+      requestDestroy: destroy,
     };
     const reconcileActivePlacement = vi.fn(dispatch.reconcileActive);
     const provider = createWorkerSessionTurnPlacementProvider({
@@ -749,7 +749,7 @@ describe("worker turn launcher terminal results", () => {
       acquireTurnCredential: vi.fn(async () => credential()),
       acknowledgeCredentialDelivery: vi.fn(async () => true),
       startTunnel: vi.fn(async () => tunnel),
-      destroy,
+      requestDestroy: destroy,
     };
     const reconcileActivePlacement = vi.fn(dispatch.reconcileActive);
     const provider = createWorkerSessionTurnPlacementProvider({
@@ -835,7 +835,7 @@ describe("worker turn launcher terminal results", () => {
     expect(tunnel.reconcileWorkspace).toHaveBeenCalledTimes(2);
     expect(harness.environments.startTunnel).toHaveBeenCalledOnce();
     expect(harness.reportWorkspaceResultRecoveryFailure).not.toHaveBeenCalled();
-    expect(harness.environments.destroy).not.toHaveBeenCalled();
+    expect(harness.environments.requestDestroy).not.toHaveBeenCalled();
     expect(destroy).not.toHaveBeenCalled();
   });
 
@@ -962,7 +962,7 @@ describe("worker turn launcher terminal results", () => {
           }),
         ),
         stopTunnel: vi.fn(async () => {}),
-        destroy: vi.fn(async () => attachedEnvironment()),
+        requestDestroy: vi.fn(async () => attachedEnvironment()),
       };
       const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
 

@@ -43,10 +43,10 @@ describe("worker environment service", () => {
       code: "bootstrap_failure",
       message: "Worker node bootstrap failed: bundle transfer unavailable",
     } satisfies Partial<WorkerEnvironmentServiceError>);
-    expect(destroy).toHaveBeenCalledWith({
-      leaseId: "device-lease-install-failure",
-      profile: { region: "test" },
-    });
+    expect(destroy).toHaveBeenCalledWith(
+      { leaseId: "device-lease-install-failure", profile: { region: "test" } },
+      { onPhase: expect.any(Function) },
+    );
     expect(support.testState.store.list()[0]).toMatchObject({
       state: "failed",
       leaseId: null,

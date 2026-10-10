@@ -261,7 +261,7 @@ describe("Crabbox checkpoint retirement", () => {
     { debt: "unrelated profile", profile: { ...PROFILE, class: "fast" }, allocation: "warmup" },
     { debt: "current image", profile: PROFILE, allocation: "warmup" },
   ])(
-    "allocates via $allocation before capture retries retained $debt deletion after restart",
+    "allocates via $allocation without awaiting retained $debt deletion after restart",
     async ({ debt, profile, allocation }) => {
       const release = createDeferred<void>();
       const allocated = createDeferred<void>();
@@ -301,10 +301,6 @@ describe("Crabbox checkpoint retirement", () => {
       const retained = (await listCrabboxWarmImages(crabboxState))[0]!;
       expect(retained.retirement?.checkpointId).toBe("chk_capture_1");
       const retainedResources = new Set(resources);
-      const pendingResources = new Set([
-        ...retainedResources,
-        ...(debt === "unrelated profile" ? ["chk_capture_3"] : []),
-      ]);
       await initial.provider.dispose();
       await closeOpenClawStateDatabaseAsync();
       resetPluginStateStoreForTests();
@@ -314,22 +310,23 @@ describe("Crabbox checkpoint retirement", () => {
       let stopping: Promise<void> | undefined;
       try {
         await allocated.promise;
+        const lease = await provisioning;
+        expect(restarted.calls.some(({ argv }) => argv[2] === "delete")).toBe(false);
         expect(restarted.calls.find(({ argv }) => argv[2] === "fork")?.argv[3]).toBe(
           allocation === "fork" ? retained.checkpointId : undefined,
         );
-        if (debt === "unrelated profile") {
-          await provisioning;
-          expect(restarted.calls.some(({ argv }) => argv[2] === "delete")).toBe(false);
-          stopping = restarted.provider.maintain!(maintenanceContext());
-        }
-        await deleting.promise;
         expect(
           (await listCrabboxWarmImages(crabboxState)).find(
             (image) => image.profileKey === retained.profileKey,
           )?.retirement,
         ).toEqual(retained.retirement);
-        expect(resources).toEqual(pendingResources);
+        expect(resources).toEqual(retainedResources);
 
+        stopping =
+          debt === "unrelated profile"
+            ? restarted.provider.maintain!(maintenanceContext())
+            : restarted.provider.destroy({ leaseId: lease.leaseId, profile });
+        await deleting.promise;
         expect(restarted.calls.find(({ argv }) => argv[2] === "delete")?.argv[3]).toBe(
           "chk_capture_1",
         );
@@ -339,7 +336,7 @@ describe("Crabbox checkpoint retirement", () => {
             (image) => image.profileKey === retained.profileKey,
           )?.retirement,
         ).toEqual(retained.retirement);
-        expect(resources).toEqual(pendingResources);
+        expect(resources).toEqual(retainedResources);
       } finally {
         release.resolve();
         await provisioning;
@@ -349,7 +346,9 @@ describe("Crabbox checkpoint retirement", () => {
       expect((await listCrabboxWarmImages(crabboxState)).every((image) => !image.retirement)).toBe(
         true,
       );
-      await restarted.provider.destroy({ leaseId: (await provisioning).leaseId, profile });
+      if (debt === "unrelated profile") {
+        await restarted.provider.destroy({ leaseId: (await provisioning).leaseId, profile });
+      }
       expect(restarted.calls.at(-1)?.argv[1]).toBe("stop");
     },
   );
@@ -460,18 +459,17 @@ describe("Crabbox checkpoint retirement", () => {
       );
       expect(resources.has("chk_capture_1")).toBe(false);
       if (cleanup !== "expiry") {
-        expect(resources).toEqual(new Set(["chk_capture_2", "chk_capture_3"]));
+        expect(resources).toEqual(new Set(["chk_capture_2"]));
         expect(restarted.calls.findLast(({ argv }) => argv[2] === "fork")?.argv[3]).toBe(
           "chk_capture_2",
         );
       } else {
-        expect(resources).toEqual(new Set(["chk_capture_3"]));
+        expect(resources).toEqual(new Set());
       }
       await restarted.provider.destroy({
         leaseId: recovered.leaseId,
         profile: { ...PROFILE, warmImage: false },
       });
-      expect(resources).toEqual(new Set(["chk_capture_3"]));
     },
   );
 
@@ -503,8 +501,9 @@ describe("Crabbox checkpoint retirement", () => {
       const now = Date.now();
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);
       await captureWarmImage(provider);
+      const lease = await provisionWarmProfile(provider, PROFILE, "first-refresh");
       clock.mockReturnValue(now + DAY_MS);
-      const refreshing = captureWarmImage(provider, PROFILE, "first-refresh");
+      const stopping = provider.destroy({ leaseId: lease.leaseId, profile: PROFILE });
       await entered.promise;
       try {
         clock.mockReturnValue(now + 2 * DAY_MS);
@@ -513,7 +512,7 @@ describe("Crabbox checkpoint retirement", () => {
       } finally {
         release.resolve();
       }
-      await refreshing;
+      await stopping;
       expect((await listCrabboxWarmImages(crabboxState))[0]).toMatchObject({
         checkpointId: "chk_generation_3",
       });

@@ -77,6 +77,7 @@ describe("prepared worker expiry during admitted work", () => {
       });
       const registerPreparedWorkspace = vi.fn(async () => {});
       const lifecycle = createWorkerProviderLifecycle({
+        onTeardownPhase: () => {},
         warn: () => {},
         ...shared,
         getConfig: () => fixture.config,

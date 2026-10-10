@@ -9,7 +9,7 @@ import {
   createNodeBootstrapFixture,
   createWorkerArchiveFixture,
 } from "./crabbox-worker-node-enrollment.test-support.js";
-import { operationLeaseId, resolveCrabboxProvisionProfile } from "./crabbox-worker-profile.js";
+import { operationLeaseId } from "./crabbox-worker-profile.js";
 import type { createCrabboxWorkerProvider } from "./crabbox-worker-provider.js";
 import {
   commandResult,
@@ -150,14 +150,6 @@ export async function provisionWarmProfile(
   return provider.provision(profile, operationId, {
     assertCurrent: () => {},
     nodeRuntimeIdentity: NODE_RUNTIME_IDENTITY,
-    ...(resolveCrabboxProvisionProfile(profile, machineClass, options?.os).profile.warmImage
-      ? {
-          prepareNodeRuntime: async () => ({
-            nodeBootstrap: createNodeBootstrapFixture(),
-            workerBundle: createWorkerArchiveFixture(),
-          }),
-        }
-      : {}),
     ...options,
     ...(machineClass ? { machineClass } : {}),
     beginNodeEnrollment:

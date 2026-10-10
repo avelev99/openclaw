@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { onSessionIdentityMutation } from "../../config/sessions/session-accessor.js";
 import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { withTimeout } from "../../infra/fs-safe.js";
@@ -44,15 +45,18 @@ import type {
   WorkerEnvironmentTransitionPatch as TransitionPatch,
 } from "./store.js";
 import { joinWorkerTunnelStops } from "./tunnel-contract.js";
+import { boundedWorkerError } from "./worker-error.js";
 import { createWorkerTurnRpc } from "./worker-turn-rpc.js";
 
 export function createWorkerEnvironmentService(options: WorkerEnvironmentServiceOptions) {
+  const inOwnerContext = AsyncLocalStorage.snapshot();
   const { store, scheduler } = options;
   const scope = scheduler.scope();
   const warn = (message: string) => options.logger?.warn(message);
   const operations = new KeyedAsyncQueue();
   const providerOperations = new KeyedAsyncQueue();
   const activeOperations = new Set<Promise<unknown>>();
+  const teardownPhases = new Map<string, "capturing" | "stopping">();
   const inferenceCancellations = new Set<Promise<unknown>>();
   const retainInferenceCancellation = (operation: Promise<unknown>) => {
     inferenceCancellations.add(operation);
@@ -90,6 +94,18 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     const release = () => activeOperations.delete(operation);
     void operation.then(release, release);
     return operation;
+  };
+
+  const awaitTeardownAdmission = <T>(run: (accept: (value: T) => void) => Promise<T>) => {
+    const accepted = createDeferredCore<T>();
+    // The service retains settlement after the request scope returns or closes.
+    const settled = inOwnerContext(() =>
+      runOutsideAsyncWorkScope(() => trackOperation(run(accepted.resolve))),
+    );
+    void settled.catch((error: unknown) =>
+      warn(`Worker environment teardown failed: ${boundedWorkerError(error)}`),
+    );
+    return Promise.race([accepted.promise, settled]);
   };
 
   const withLock = <T>(environmentId: string, task: () => Promise<T>) =>
@@ -203,12 +219,20 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     move,
     saveError,
     withLock,
+    onTeardownPhase: (environmentId, phase) => {
+      if (phase) {
+        teardownPhases.set(environmentId, phase);
+      } else {
+        teardownPhases.delete(environmentId);
+      }
+    },
   });
 
   const environmentAccess = createWorkerEnvironmentAccess({
     ...options,
     store,
     getCleanupError: (record) => sessionAttachments.getCleanupError(record),
+    getTeardownPhase: (environmentId) => teardownPhases.get(environmentId),
     prepareCurrentBundle: async () => await prepareInstallation("bundle"),
     now,
     identityResolverFor: providerLifecycle.identityResolverFor,
@@ -226,6 +250,7 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
     warn,
     withLock,
     trackOperation,
+    awaitTeardownAdmission,
   });
 
   const preparedPool = createPreparedWorkerPool({
@@ -628,14 +653,27 @@ export function createWorkerEnvironmentService(options: WorkerEnvironmentService
       environmentAccess.project(
         await providerLifecycle.destroy(environmentId, { abandonment, forceAbandon }),
       ),
-    requestDestroy: async (environmentId: string) =>
+    requestDestroy: async (
+      environmentId: string,
+      abandonment?: WorkerEnvironmentAbandonment,
+      forceAbandon?: () => Promise<void>,
+    ) =>
       environmentAccess.project(
-        await providerLifecycle.destroy(environmentId, { retryRequested: false }),
+        await awaitTeardownAdmission((onAccepted) =>
+          providerLifecycle.destroy(environmentId, {
+            abandonment,
+            forceAbandon,
+            onAccepted,
+            retryRequested: abandonment || forceAbandon ? undefined : false,
+          }),
+        ),
       ),
     destroyUnattached: async (environmentId: string) => {
       await preparedPool.cancelPreparation(environmentId);
       return environmentAccess.project(
-        await providerLifecycle.destroy(environmentId, { requireUnattached: true }),
+        await awaitTeardownAdmission((onAccepted) =>
+          providerLifecycle.destroy(environmentId, { requireUnattached: true, onAccepted }),
+        ),
       );
     },
     observeDesktop: environmentAccess.observeDesktop,

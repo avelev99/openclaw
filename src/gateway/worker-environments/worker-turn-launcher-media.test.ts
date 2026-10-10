@@ -106,7 +106,7 @@ function harness(assistantText = "image received") {
       acknowledgeCredentialDelivery: async () => true,
       startTunnel: async () => tunnel,
       stopTunnel: async () => {},
-      destroy: async () => environment,
+      requestDestroy: async () => environment,
     },
   });
   const runLocal = vi.fn(async () => ({ meta: { durationMs: 0 } }));

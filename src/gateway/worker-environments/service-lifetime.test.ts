@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
+import type { WorkerProvider } from "../../plugins/types.js";
+import { AsyncWorkScope } from "../../shared/async-work-scope.js";
 import {
   createGatewaySchedulerClock,
   createTestGatewayScheduler,
@@ -12,6 +15,59 @@ type WorkerLifecycleLease = support.WorkerLifecycleLease;
 
 describe("worker environment service", () => {
   support.setupWorkerEnvironmentServiceSuite();
+
+  it("resumes accepted teardown after capture interruption and restart", async ({ signal }) => {
+    const environmentId = "background-capture-restart";
+    await support.seedAttachedIdentity(environmentId, "session-capture-restart");
+    const leaseId = support.testState.store.get(environmentId)!.leaseId;
+    const capturing = createDeferred();
+    const interrupted = createDeferred();
+    const firstDestroy = vi.fn<WorkerProvider["destroy"]>(async (_lease, options) => {
+      options?.onPhase?.("capturing");
+      capturing.resolve();
+      await racePromiseWithAbortSignal(interrupted.promise, signal);
+      throw new Error("capture command interrupted before lease release");
+    });
+    const first = support.createService(support.createProvider({ destroy: firstDestroy }));
+    const caller = new AsyncWorkScope();
+    try {
+      const accepted = await racePromiseWithAbortSignal(
+        caller.run(() => first.requestDestroy(environmentId)),
+        signal,
+      );
+      await racePromiseWithAbortSignal(capturing.promise, signal);
+      await caller.drain();
+      expect(await first.requestDestroy(environmentId)).toMatchObject({ state: "destroying" });
+      expect(accepted).toMatchObject({ state: "destroying", attachedSessionIds: [] });
+      expect(first.get(environmentId)?.teardownPhase).toBe("capturing");
+      expect(support.testState.store.getCredential(environmentId)).toBeUndefined();
+      expect(firstDestroy).toHaveBeenCalledOnce();
+    } finally {
+      interrupted.resolve();
+      await support.reopenWorkerEnvironmentStore();
+    }
+    expect(firstDestroy).toHaveBeenCalledOnce();
+    expect(support.testState.store.get(environmentId)).toMatchObject({
+      state: "destroying",
+      leaseId,
+      destroyRequestedAtMs: support.testState.nowMs,
+      lastError: "capture command interrupted before lease release",
+    });
+    let latePhase: ((phase: "capturing" | "stopping") => void) | undefined;
+    const resumedDestroy = vi.fn<WorkerProvider["destroy"]>(async (_lease, options) => {
+      latePhase = options?.onPhase;
+      options?.onPhase?.("stopping");
+    });
+    const restarted = support.createService(support.createProvider({ destroy: resumedDestroy }));
+    await restarted.reconcileOnce(environmentId);
+    expect(resumedDestroy).toHaveBeenCalledExactlyOnceWith(
+      { leaseId, profile: { region: "test" } },
+      { onPhase: expect.any(Function) },
+    );
+    expect(restarted.get(environmentId)).toMatchObject({ state: "destroyed" });
+    latePhase?.("capturing");
+    expect(restarted.get(environmentId)).not.toHaveProperty("teardownPhase");
+  });
 
   it.each([false, true])(
     "withdraws dedicated access before persistence settles (rejected=%s)",

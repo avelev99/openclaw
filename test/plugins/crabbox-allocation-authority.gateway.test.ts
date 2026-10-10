@@ -173,16 +173,6 @@ describe("Crabbox allocation through Gateway ownership", () => {
         settings,
       };
       const service = support.createService(provider, {
-        prepareNodeRuntime: async () => ({
-          nodeBootstrap: support.NODE_BOOTSTRAP,
-          workerBundle: {
-            url: support.NODE_BOOTSTRAP.url,
-            token: support.NODE_BOOTSTRAP.token,
-            sha256: support.BUNDLE_ARTIFACT.tarballSha256,
-            bytes: support.BUNDLE_ARTIFACT.tarballBytes,
-            packageRelativePath: `worker-artifacts/${support.BUNDLE_ARTIFACT.tarballSha256}.tgz`,
-          },
-        }),
         prepareNodeEnrollment: async () => ({
           mode: "connect",
           setupCode: "synthetic-setup",

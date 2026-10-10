@@ -215,9 +215,9 @@ describe("forced destruction across Gateway restart", () => {
       workspacePath: support.testState.root,
     });
 
-    await expect(harness.service.forceDestroyEnvironment(environmentId)).rejects.toThrow(
-      "provider deletion refused",
-    );
+    await expect(harness.service.forceDestroyEnvironment(environmentId)).resolves.toMatchObject({
+      state: "destroying",
+    });
     expect(placements.get(REQUEST.sessionId)).toMatchObject({
       state: "failed",
       recoveryError: FORCED_WORKER_ABANDONMENT_ERROR,
@@ -232,7 +232,7 @@ describe("forced destruction across Gateway restart", () => {
       throw new Error("forced teardown lost its dedicated environment");
     }
     expect(pending).toMatchObject({
-      state: "attached",
+      state: "destroying",
       sharedHost: false,
       nodeDeviceId: attached.nodeDeviceId,
       destroyRequestedAtMs: support.testState.nowMs,
@@ -240,6 +240,7 @@ describe("forced destruction across Gateway restart", () => {
       error: expect.stringContaining("provider deletion refused"),
     });
     expect(pending?.lastError).toContain("quota blocked");
+    expect(pending.ownerEpoch).toBeGreaterThan(attached.ownerEpoch);
     expect(pending?.lastError?.length).toBeLessThanOrEqual(1_024);
     expect(summarizeWorkerEnvironment(pending, support.testState.nowMs)).toMatchObject({
       status: "error",
@@ -253,16 +254,38 @@ describe("forced destruction across Gateway restart", () => {
       environmentService: service,
       workspacePath: support.testState.root,
     });
+    const secondFailureCommitted = createDeferred();
+    const recordError = support.testState.store.recordError.bind(support.testState.store);
+    vi.spyOn(support.testState.store, "recordError").mockImplementation(async (input) => {
+      const record = await recordError(input);
+      if (
+        input.environmentId === environmentId &&
+        input.error.includes("provider deletion still blocked")
+      ) {
+        secondFailureCommitted.resolve();
+      }
+      return record;
+    });
+    const destroyedCommitted = createDeferred();
+    const transition = support.testState.store.transition.bind(support.testState.store);
+    vi.spyOn(support.testState.store, "transition").mockImplementation(async (input) => {
+      const record = await transition(input);
+      if (input.environmentId === environmentId && input.to === "destroyed") {
+        destroyedCommitted.resolve();
+      }
+      return record;
+    });
     await restarted.service.reconcile("startup");
-    // Failed-placement cleanup belongs to the tracked post-start sweep.
     await restarted.service.reconcileActive(environmentId);
+    await secondFailureCommitted.promise;
     expect(destroy).toHaveBeenCalledTimes(2);
     expect(service.get(environmentId)).toMatchObject({
-      state: "attached",
+      state: "destroying",
       lastError: `${FORCED_WORKER_ABANDONMENT_ERROR}; provider deletion still blocked`,
       error: expect.stringContaining("provider deletion still blocked"),
     });
     await restarted.service.reconcileActive(environmentId);
+    await destroyedCommitted.promise;
     expect(destroy).toHaveBeenCalledTimes(3);
     expect(service.get(environmentId)?.state).toBe("destroyed");
     expect(claimStop).not.toHaveBeenCalled();

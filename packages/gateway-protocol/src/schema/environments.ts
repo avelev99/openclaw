@@ -121,6 +121,7 @@ export const WorkerEnvironmentMetadataSchema = closedObject({
   ageMs: Type.Integer({ minimum: 0 }),
   idleMs: Type.Optional(Type.Integer({ minimum: 0 })),
   destroyRequestedAtMs: Type.Optional(Type.Integer({ minimum: 0 })),
+  teardownPhase: Type.Optional(Type.Union([Type.Literal("capturing"), Type.Literal("stopping")])),
   attachedSessionIds: Type.Array(NonEmptyString),
   tunnelStatus: WorkerTunnelStatusSchema,
   error: Type.Optional(NonEmptyString),

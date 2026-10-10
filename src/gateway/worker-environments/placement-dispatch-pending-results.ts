@@ -103,7 +103,7 @@ export async function recoverPendingWorkspaceResults(
       current.state !== "destroyed" &&
       (current.ownerEpoch === placement.activeOwnerEpoch || current.destroyRequestedAtMs !== null)
     ) {
-      await environments.destroy(placement.environmentId);
+      await environments.requestDestroy(placement.environmentId);
     }
   };
   const stagedResultOwners = new Set<string>();
@@ -636,7 +636,7 @@ export async function recoverPendingWorkspaceResults(
                       } else {
                         recovery.assertCurrent();
                         assertMoveCurrent?.();
-                        await environments.destroy(active.environmentId);
+                        await environments.requestDestroy(active.environmentId);
                       }
                       quiescenceHandled = true;
                     },
@@ -645,13 +645,6 @@ export async function recoverPendingWorkspaceResults(
                       : {
                           complete: completeResult,
                         }),
-                    afterComplete: async () => {
-                      if ((!sameGatewayInstance || reclaimResult) && !preserveEnvironment) {
-                        await environments
-                          .stopTunnel(active.environmentId, active.activeOwnerEpoch)
-                          .catch(() => undefined);
-                      }
-                    },
                   },
                 );
               } finally {

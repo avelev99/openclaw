@@ -198,7 +198,7 @@ describe("worker turn launcher remote handoff", () => {
       acknowledgeCredentialDelivery,
       startTunnel: vi.fn(async () => tunnel),
       stopTunnel: vi.fn(async () => {}),
-      destroy: vi.fn(async () => attachedEnvironment()),
+      requestDestroy: vi.fn(async () => attachedEnvironment()),
     };
     const resolveWorkspace = vi.fn(async () => ({ kind: "local" as const, path: root }));
     const provider = createWorkerSessionTurnPlacementProvider({
@@ -439,7 +439,7 @@ describe("worker turn launcher remote handoff", () => {
       acknowledgeCredentialDelivery: vi.fn(async () => true),
       startTunnel: vi.fn(async () => tunnel),
       stopTunnel: vi.fn(async () => {}),
-      destroy: vi.fn(async () => attachedEnvironment()),
+      requestDestroy: vi.fn(async () => attachedEnvironment()),
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
 

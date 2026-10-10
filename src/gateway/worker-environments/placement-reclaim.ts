@@ -335,11 +335,11 @@ export function createWorkerPlacementReclaim(options: WorkerPlacementReclaimOpti
                           });
                           assertCurrent();
                         }
-                        await environments.destroy(current.environmentId);
+                        await environments.requestDestroy(current.environmentId);
                       },
                       complete: async () => {
-                        // Destroy is the final privileged effect. Once it commits, durable placement
-                        // completion must finish even if caller authority closes during the await.
+                        // Durable teardown admission is the final privileged effect. Provider
+                        // settlement belongs to the environment after the workspace returns.
                         const completed = await completeWorkerWorkspaceTeardown({
                           placements,
                           turnClaim: reclaimClaim,
@@ -363,11 +363,6 @@ export function createWorkerPlacementReclaim(options: WorkerPlacementReclaimOpti
               );
               if (reclaimed.state !== "local" && reclaimed.state !== "reclaimed") {
                 throw new Error("Cloud worker teardown produced a nonterminal placement");
-              }
-              try {
-                await environments.stopTunnel(current.environmentId, current.activeOwnerEpoch);
-              } catch {
-                // Provider teardown is authoritative; local tunnel cleanup is best effort.
               }
               return reclaimed;
             } catch (error) {

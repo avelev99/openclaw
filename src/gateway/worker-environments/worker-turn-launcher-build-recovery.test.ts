@@ -746,7 +746,7 @@ describe("worker turn launcher build recovery", () => {
         workerBundleHash: "b".repeat(64),
         turnClaim: null,
       });
-      expect(harness.environments.destroy).not.toHaveBeenCalled();
+      expect(harness.environments.requestDestroy).not.toHaveBeenCalled();
       expect(harness.runLocal).not.toHaveBeenCalled();
       await expectSinglePersistedInput();
     },
@@ -868,6 +868,6 @@ describe("worker turn launcher build recovery", () => {
       state: "active",
       turnClaim: { claimId: harness.originalClaimIds[0] },
     });
-    expect(harness.environments.destroy).not.toHaveBeenCalled();
+    expect(harness.environments.requestDestroy).not.toHaveBeenCalled();
   });
 });

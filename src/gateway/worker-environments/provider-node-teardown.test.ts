@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createDeferred } from "../../../test/helpers/promise.js";
 import { createNodeWorkerTunnelManager } from "./node-worker-tunnel.js";
 import * as nodeTunnelSupport from "./node-worker-tunnel.test-support.js";
 import * as support from "./service.test-support.js";
@@ -110,6 +111,13 @@ describe("worker provider node teardown", () => {
         }),
         { nodeTunnelManager: nodeTunnels },
       );
+      const failureCommitted = createDeferred();
+      const recordError = support.testState.store.recordError.bind(support.testState.store);
+      vi.spyOn(support.testState.store, "recordError").mockImplementation(async (input) => {
+        const record = await recordError(input);
+        failureCommitted.resolve();
+        return record;
+      });
       try {
         const credential = support.testState.store.getCredential(environmentId);
         await expect(
@@ -122,22 +130,27 @@ describe("worker provider node teardown", () => {
         expect(support.testState.store.getCredential(environmentId)).toEqual(credential);
         expect(destroy).not.toHaveBeenCalled();
         await start();
-        await expect(service.requestDestroy(environmentId)).rejects.toMatchObject({
-          code: "provider_failure",
+        await expect(service.requestDestroy(environmentId)).resolves.toMatchObject({
+          state: "destroying",
         });
+        await failureCommitted.promise;
         expect(nodeTunnels.status(environmentId)).toBe("stopped");
         expect(support.testState.store.get(environmentId)).toMatchObject({
-          state: "attached",
-          ownerEpoch: attached.ownerEpoch,
-          attachedSessionIds: ["session-destroyed"],
+          state: "destroying",
+          attachedSessionIds: [],
           destroyRequestedAtMs: support.testState.nowMs,
+          lastError: "provider destruction is indeterminate",
         });
+        expect(support.testState.store.get(environmentId)!.ownerEpoch).toBeGreaterThan(
+          attached.ownerEpoch,
+        );
         expect(support.testState.store.getCredential(environmentId)).toBeUndefined();
 
         const pending = support.testState.store.get(environmentId);
-        await expect(service.requestDestroy(environmentId)).rejects.toThrow(
-          "provider destruction is indeterminate",
-        );
+        await expect(service.requestDestroy(environmentId)).resolves.toMatchObject({
+          state: "destroying",
+          error: "provider destruction is indeterminate",
+        });
         expect(support.testState.store.get(environmentId)).toEqual(pending);
         expect(destroy).toHaveBeenCalledOnce();
 

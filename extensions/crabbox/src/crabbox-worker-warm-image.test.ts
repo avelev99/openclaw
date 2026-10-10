@@ -25,7 +25,7 @@ import {
 } from "./crabbox-worker-warm-image.test-support.js";
 
 describe("Crabbox profile warm images", () => {
-  it("records unsupported runtime capture without failing enrollment or source stop", async () => {
+  it("records unsupported teardown capture without failing source stop", async () => {
     const now = 1_800_000_000_000;
     vi.spyOn(Date, "now").mockReturnValue(now);
     const { provider, calls, warn } = createWarmProvider(({ argv }) =>
@@ -217,16 +217,19 @@ describe("Crabbox profile warm images", () => {
     },
   );
 
-  it("scrubs every worker identity and workspace before capturing a prepared runtime", async () => {
+  it("scrubs every worker identity and workspace before capturing an enrolled lease", async () => {
     const { provider, calls } = createWarmProvider();
     const lease = await provisionWarmProfile(provider);
+    calls.length = 0;
+
     await provider.destroy({ leaseId: lease.leaseId, profile: PROFILE });
-    const scrub = calls.find(({ options }) =>
-      options.input?.toString().includes("CRABBOX_SCRUB_NODE_SCRIPT"),
-    );
-    const capture = calls.find(({ argv }) => argv[2] === "create");
-    const script = scrub!.options.input!.toString();
-    const scrubScriptSource = script.slice(script.indexOf("set -eu\nworker_root="));
+
+    expect(calls.map(({ argv }) => argv.slice(1, argv[1] === "checkpoint" ? 3 : 2))).toEqual([
+      ["run"],
+      ["checkpoint", "create"],
+      ["stop"],
+    ]);
+    const scrub = calls[0];
     expect(scrub?.argv).toContain("--script-stdin");
     expect(scrub?.options.input).toContain("$HOME/.openclaw/cloud-workers");
 
@@ -234,8 +237,11 @@ describe("Crabbox profile warm images", () => {
     expect(scrub?.options.input).toContain('rm -rf "$HOME/.openclaw-worker/workspaces"');
     // Capture phases ride a full crabbox run/snapshot round trip; 60s starves
     // them under coordinator latency (live-measured on AWS 2026-08-26).
-    expect(scrub?.options.timeoutMs).toBe(18 * 60_000);
-    expect(capture?.options.timeoutMs).toBe(48 * 60_000);
+    expect(scrub?.options.timeoutMs).toBe(180_000);
+    expect(calls[1]?.options.timeoutMs).toBe(48 * 60_000);
+    expect(provider.resolveDestroyTimeoutMs?.(PROFILE)).toBeGreaterThanOrEqual(
+      calls.reduce((total, call) => total + call.options.timeoutMs, 0),
+    );
     const home = tempDirs.make("openclaw-crabbox-warm-scrub-");
     const workspace = path.join(
       home,
@@ -261,7 +267,7 @@ describe("Crabbox profile warm images", () => {
     fs.mkdirSync(path.dirname(envFile), { recursive: true });
     fs.mkdirSync(path.dirname(scrubScript), { recursive: true });
     fs.writeFileSync(envFile, "CRABBOX_WORKER_BOOTSTRAP_TOKEN=synthetic-expired-token");
-    fs.writeFileSync(scrubScript, scrubScriptSource);
+    fs.writeFileSync(scrubScript, String(scrub?.options.input));
     fs.writeFileSync(path.join(workspace, "private.txt"), "session workspace bytes");
     fs.writeFileSync(npmCache, "reusable npm package");
     for (const file of [path.join(sshWorkspace, "private.txt"), bundle, gitSeed]) {
@@ -331,7 +337,7 @@ describe("Crabbox profile warm images", () => {
     fs.mkdirSync(path.dirname(envFile), { recursive: true });
     fs.mkdirSync(path.dirname(scrubScript), { recursive: true });
     fs.writeFileSync(envFile, "CRABBOX_WORKER_BOOTSTRAP_TOKEN=synthetic-expired-token");
-    fs.writeFileSync(scrubScript, scrubScriptSource);
+    fs.writeFileSync(scrubScript, String(scrub?.options.input));
     fs.writeFileSync(
       path.join(bin, "rm"),
       '#!/bin/sh\ncase "$*" in *".crabbox/env"*) exit 7;; esac\nexec /bin/rm "$@"\n',
@@ -348,7 +354,7 @@ describe("Crabbox profile warm images", () => {
       }),
     ).toThrow();
     expect(fs.existsSync(envFile)).toBe(true);
-    expect(capture?.argv.slice(1)).toEqual([
+    expect(calls[1]?.argv.slice(1)).toEqual([
       "checkpoint",
       "create",
       "--provider",
@@ -440,9 +446,11 @@ describe("Crabbox profile warm images", () => {
       const scrub = calls.find(({ options }) =>
         options.input?.toString().includes("CRABBOX_SCRUB_NODE_SCRIPT"),
       );
-      expect(scrub?.options.timeoutMs).toBe(18 * 60_000);
-      expect(provider.resolveProvisionTimeoutMs?.(profile)).toBeGreaterThan(
-        create!.options.timeoutMs,
+      expect(scrub?.options.timeoutMs).toBe(180_000);
+      const teardownCalls = calls.slice(calls.indexOf(scrub!));
+      // Include stop after capture: the caller must not time out while either still owns the lease.
+      expect(provider.resolveDestroyTimeoutMs?.(profile)).toBeGreaterThanOrEqual(
+        teardownCalls.reduce((total, call) => total + call.options.timeoutMs, 0),
       );
       expect((await listCrabboxWarmImages(crabboxState))[0]?.state).toBe("available");
       calls.length = 0;
@@ -494,21 +502,27 @@ describe("Crabbox profile warm images", () => {
         stderr: "image submission rejected; source rollback failed",
       },
     },
-  ])("stops without enrolling when runtime preparation $name", async (testCase) => {
+  ])("warns once and still stops the enrolled lease when $name", async (testCase) => {
     const { action, result, captureUncertain = action === "create" } = testCase;
-    let failing = true;
+    let tearingDown = false;
     const { provider, calls, warn } = createWarmProvider(({ argv }) => {
-      if (failing && (argv[1] === action || argv[2] === action)) {
+      if (tearingDown && (argv[1] === action || argv[2] === action)) {
         return commandResult(result);
       }
       return undefined;
     });
-    await expect(provisionWarmProfile(provider)).rejects.toThrow();
-    expect(warn).toHaveBeenCalledTimes(captureUncertain ? 1 : 0);
+    const lease = await provisionWarmProfile(provider);
+    tearingDown = true;
+
+    await expect(
+      provider.destroy({ leaseId: lease.leaseId, profile: PROFILE }),
+    ).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalledOnce();
     expect(calls.at(-1)?.argv[1]).toBe("stop");
     expect(calls.filter(({ argv }) => argv[1] === "stop")).toHaveLength(1);
 
-    failing = false;
+    tearingDown = false;
     calls.length = 0;
     if (captureUncertain) {
       // Failed creation can retain a paid artifact; retry requires explicit cleanup acknowledgment.
@@ -518,6 +532,7 @@ describe("Crabbox profile warm images", () => {
       await recoverCrabboxWarmImageCapture(crabboxState, capture!.selector, true);
     } else {
       expect(await listCrabboxWarmImages(crabboxState)).toEqual([]);
+      expect(warn.mock.calls[0]?.[0]).not.toContain("--recover");
     }
     await captureWarmImage(provider);
     expect(calls.some(({ argv }) => argv[1] === "warmup")).toBe(true);
@@ -603,7 +618,7 @@ describe("Crabbox profile warm images", () => {
         profile,
       });
 
-      expect(restarted.calls.filter(({ argv }) => argv[2] === "create")).toHaveLength(0);
+      expect(restarted.calls.filter(({ argv }) => argv[2] === "create")).toHaveLength(1);
 
       restarted.calls.length = 0;
       await provisionWarmProfile(

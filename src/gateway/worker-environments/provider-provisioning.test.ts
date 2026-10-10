@@ -365,7 +365,10 @@ describe("worker environment service", () => {
       message: expect.stringContaining("worker-turn providers must return a node lease"),
     });
 
-    expect(destroy).toHaveBeenCalledWith({ leaseId: lease.leaseId, profile: { region: "test" } });
+    expect(destroy).toHaveBeenCalledWith(
+      { leaseId: lease.leaseId, profile: { region: "test" } },
+      { onPhase: expect.any(Function) },
+    );
     expect(support.testState.bootstrapWorker).not.toHaveBeenCalled();
     expect(support.testState.store.list()).toEqual([
       expect.objectContaining({

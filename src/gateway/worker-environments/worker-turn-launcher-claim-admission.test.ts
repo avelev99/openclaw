@@ -460,7 +460,7 @@ describe("worker turn launcher claim admission", () => {
         }),
       ),
       stopTunnel,
-      destroy,
+      requestDestroy: destroy,
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
     const firstRunId = "run-cancelled-worker";
@@ -596,7 +596,7 @@ describe("worker turn launcher claim admission", () => {
         }),
       ),
       stopTunnel: vi.fn(async () => {}),
-      destroy: vi.fn(async () => attachedEnvironment()),
+      requestDestroy: vi.fn(async () => attachedEnvironment()),
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
     const claim = {
@@ -774,7 +774,7 @@ describe("worker turn launcher claim admission", () => {
         }),
       ),
       stopTunnel,
-      destroy,
+      requestDestroy: destroy,
     };
     const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
 

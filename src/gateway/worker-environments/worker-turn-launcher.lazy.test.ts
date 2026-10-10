@@ -173,7 +173,7 @@ describe("worker turn execution loading", () => {
         }
         expect(runLocal).not.toHaveBeenCalled();
         expect(environments.startTunnel).not.toHaveBeenCalled();
-        expect(environments.destroy).not.toHaveBeenCalled();
+        expect(environments.requestDestroy).not.toHaveBeenCalled();
         expect(fixture.placements.get(fixture.SESSION_ID)?.turnClaim?.claimId).toBe(
           replacement?.claimId,
         );

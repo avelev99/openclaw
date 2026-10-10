@@ -422,7 +422,13 @@ export type WorkerProvider = {
     assertCurrent: () => void;
   }) => Promise<void>;
   /** Idempotent; resolves only after the provider can prove teardown. */
-  destroy: (lease: { leaseId: string; profile: WorkerProfile }) => Promise<void>;
+  destroy: (
+    lease: { leaseId: string; profile: WorkerProfile },
+    options?: {
+      /** Report progress only during this teardown invocation; core owns its lifetime. */
+      onPhase?: (phase: "capturing" | "stopping") => void;
+    },
+  ) => Promise<void>;
   /** Maximum core wait for teardown, including provider-owned checkpointing and cleanup. */
   resolveDestroyTimeoutMs?: (profile: WorkerProfile) => number;
 };

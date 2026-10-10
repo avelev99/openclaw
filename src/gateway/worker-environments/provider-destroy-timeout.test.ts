@@ -165,9 +165,9 @@ describe("worker provider teardown deadlines", () => {
         "Worker provider operation timed out after 20ms",
       );
 
-      await expect(service.requestDestroy(initial.environmentId)).rejects.toMatchObject({
-        code: "invalid_state",
-        message: expect.stringContaining("Worker provider operation timed out after 20ms"),
+      await expect(service.requestDestroy(initial.environmentId)).resolves.toMatchObject({
+        state: "destroying",
+        error: "Worker provider operation timed out after 20ms",
       });
       expect(resolveDestroyTimeoutMs).toHaveBeenCalledOnce();
       expect(destroy).toHaveBeenCalledOnce();

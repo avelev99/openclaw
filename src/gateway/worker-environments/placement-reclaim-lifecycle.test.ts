@@ -4,11 +4,14 @@ import {
   WORKER_EXECUTION_CONTEXT_PROTOCOL_FEATURE,
 } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
 import { NODE_WORKER_ENVIRONMENT_STOP_COMMAND } from "../../infra/node-commands.js";
+import type { WorkerProvider } from "../../plugins/types.js";
 import {
   NODE_WORKSPACE_QUIESCENCE_COMMAND,
   type NodeWorkerWorkspaceExecInput,
 } from "../../worker/node-workspace-protocol.js";
+import { summarizeWorkerEnvironment } from "./environment-summary.js";
 import { createNodeWorkerTunnelManager } from "./node-worker-tunnel.js";
 import * as nodeSupport from "./node-worker-tunnel.test-support.js";
 import { coordinateWorkerPlacementDispatch } from "./placement-dispatch-coordinator.js";
@@ -213,11 +216,11 @@ describe("placement reclaim with provider-owned node teardown", () => {
         } catch (error) {
           primaryError = error;
           expect(support.testState.store.get(id)).toMatchObject({
-            state: "attached",
-            attachedSessionIds: [active.sessionId],
-            ownerEpoch: attached.ownerEpoch,
+            state: "destroying",
+            attachedSessionIds: [],
             destroyRequestedAtMs: support.testState.nowMs,
           });
+          expect(support.testState.store.get(id)!.ownerEpoch).toBeGreaterThan(attached.ownerEpoch);
           expect(support.testState.store.getCredential(id)).toBeUndefined();
           expect(tunnels.status(id)).toBe("stopped");
           providerPending.resolve();
@@ -345,9 +348,9 @@ describe("placement reclaim with provider-owned node teardown", () => {
 describe("SSH placement cleanup after worker credential expiry", () => {
   support.setupWorkerEnvironmentServiceSuite();
 
-  it.each(["reclaim", "move", "idle suspend"] as const)(
-    "%s reconciles the workspace before releasing the exact lease",
-    async (operation) => {
+  it.for(["reclaim", "move", "idle suspend"] as const)(
+    "%s returns the workspace while the exact lease finishes capture in the background",
+    async (operation, { signal }) => {
       const placements = createWorkerSessionPlacementStore({
         database: support.testState.stateDb,
         now: () => support.testState.nowMs,
@@ -381,51 +384,77 @@ describe("SSH placement cleanup after worker credential expiry", () => {
         stop: vi.fn(async () => {}),
         stopAll: vi.fn(async () => {}),
       } as unknown as WorkerTunnelManager;
-      const destroy = vi.fn(async () => {
+      const capturing = createDeferred();
+      const finishCapture = createDeferred();
+      const destroy = vi.fn<WorkerProvider["destroy"]>(async (_lease, options) => {
         expect(reconcileWorkspace).toHaveBeenCalledOnce();
+        options?.onPhase?.("capturing");
+        capturing.resolve();
+        await racePromiseWithAbortSignal(finishCapture.promise, signal);
+        options?.onPhase?.("stopping");
       });
       const service = support.createService(support.createProvider({ destroy }), { tunnelManager });
       vi.mocked(harness.environments.get).mockImplementation(service.get);
       vi.mocked(harness.environments.startTunnel).mockImplementation(service.startTunnel);
       vi.mocked(harness.environments.stopTunnel).mockImplementation(service.stopTunnel);
       vi.mocked(harness.environments.destroy).mockImplementation(service.destroy);
+      harness.environments.requestDestroy = service.requestDestroy;
       support.testState.nowMs = identity.credentialExpiresAtMs + 60_001;
 
-      if (operation === "move") {
-        await harness.service.move({
-          ...REQUEST,
-          source: {
-            generation: active.generation,
-            environmentId,
-            ownerEpoch: identity.ownerEpoch,
-          },
-          target: { kind: "gateway" },
-        });
-      } else if (operation === "idle suspend") {
-        support.getDevelopmentProfile().suspendAfter = "1m";
-        const warn = vi.fn();
-        await createWorkerPlacementIdleSweep({
-          placements,
-          environments: service,
-          dispatch: harness.service,
-          reportChanges: (sweep) => sweep(),
-          getConfig: () => support.testState.config,
-          now: () => support.testState.nowMs,
-          info: vi.fn(),
-          warn,
-        }).sweep();
-        expect(warn).not.toHaveBeenCalled();
-      } else {
-        await harness.service.reclaim(REQUEST);
-      }
+      try {
+        if (operation === "move") {
+          await racePromiseWithAbortSignal(
+            harness.service.move({
+              ...REQUEST,
+              source: {
+                generation: active.generation,
+                environmentId,
+                ownerEpoch: identity.ownerEpoch,
+              },
+              target: { kind: "gateway" },
+            }),
+            signal,
+          );
+        } else if (operation === "idle suspend") {
+          support.getDevelopmentProfile().suspendAfter = "1m";
+          const warn = vi.fn();
+          await racePromiseWithAbortSignal(
+            createWorkerPlacementIdleSweep({
+              placements,
+              environments: service,
+              dispatch: harness.service,
+              reportChanges: (sweep) => sweep(),
+              getConfig: () => support.testState.config,
+              now: () => support.testState.nowMs,
+              info: vi.fn(),
+              warn,
+            }).sweep(),
+            signal,
+          );
+          expect(warn).not.toHaveBeenCalled();
+        } else {
+          await racePromiseWithAbortSignal(harness.service.reclaim(REQUEST), signal);
+        }
 
+        await racePromiseWithAbortSignal(capturing.promise, signal);
+        const environment = service.get(environmentId)!;
+        expect(summarizeWorkerEnvironment(environment)).toMatchObject({
+          status: "stopping",
+          worker: { state: "destroying", teardownPhase: "capturing", attachedSessionIds: [] },
+        });
+        expect(support.testState.store.getCredential(environmentId)).toBeUndefined();
+        expect(await service.requestDestroy(environmentId)).toMatchObject({ state: "destroying" });
+        expect(placements.get(active.sessionId)).toMatchObject({
+          state: operation === "move" ? "local" : "reclaimed",
+          turnClaim: null,
+        });
+        expect(await placements.listPendingWorkspaceResultsAsync()).toEqual([]);
+      } finally {
+        finishCapture.resolve();
+        await service.destroy(environmentId);
+      }
       expect(destroy).toHaveBeenCalledOnce();
       expect(service.get(environmentId)?.state).toBe("destroyed");
-      expect(placements.get(active.sessionId)).toMatchObject({
-        state: operation === "move" ? "local" : "reclaimed",
-        turnClaim: null,
-      });
-      expect(await placements.listPendingWorkspaceResultsAsync()).toEqual([]);
     },
   );
 });

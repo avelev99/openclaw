@@ -42,6 +42,7 @@ export function createWorkerEnvironmentSessionAttachments(
     warn: (message: string) => void;
     withLock: <T>(environmentId: string, task: () => Promise<T>) => Promise<T>;
     trackOperation: <T>(operation: Promise<T>) => Promise<T>;
+    awaitTeardownAdmission: <T>(run: (accept: (value: T) => void) => Promise<T>) => Promise<T>;
     environmentAccess: Pick<ReturnType<typeof createWorkerEnvironmentAccess>, "project">;
     nodePortalCarrier?: WorkerNodePortalCarrier;
   },
@@ -90,67 +91,73 @@ export function createWorkerEnvironmentSessionAttachments(
       options.warn(retry.parked);
     }
   };
-  const destroyEnvironment = (environmentId: string, explicit = false) =>
-    cleanups.enqueue(environmentId, async () => {
-      await store.ready();
-      const record = store.get(environmentId);
-      if (!record) {
-        cleanupRetries.delete(environmentId);
-        return undefined;
-      }
-      const previous = cleanupRetry(record);
-      if (explicit) {
-        cleanupRetries.delete(environmentId);
-      } else if (previous) {
-        if (options.now() - previous.startedAtMs >= 3_600_000) {
-          parkCleanup(record, previous);
-        }
-        if (previous.parked || options.now() < previous.nextAttemptAtMs) {
+  const destroyEnvironment = (environmentId: string, explicit = false) => {
+    const run = (onAccepted?: (record: WorkerEnvironmentRecord | undefined) => void) =>
+      cleanups.enqueue(environmentId, async () => {
+        await store.ready();
+        const record = store.get(environmentId);
+        if (!record) {
+          cleanupRetries.delete(environmentId);
           return undefined;
         }
-      }
-      const retry = (!explicit && previous) || {
-        ownerEpoch: record.ownerEpoch,
-        leaseId: record.leaseId,
-        startedAtMs: options.now(),
-        attempts: 0,
-        nextAttemptAtMs: 0,
-        lastError: "",
-      };
-      retry.attempts += 1;
-      try {
-        const stopped = await providerLifecycle.destroy(environmentId, { requireUnattached: true });
-        if (
-          stopped.state !== "destroyed" &&
-          !(stopped.state === "failed" && stopped.leaseId === null)
-        ) {
-          throw new Error(
-            `Conversation environment cleanup is not confirmed (${stopped.state}); the existing lease remains owned`,
-          );
-        }
-        cleanupRetries.delete(environmentId);
-        return stopped;
-      } catch (error) {
-        const current = store.get(environmentId)!;
-        retry.ownerEpoch = current.ownerEpoch;
-        retry.leaseId = current.leaseId;
-        retry.lastError = boundedWorkerError(error);
-        retry.nextAttemptAtMs =
-          options.now() + Math.min(30_000 * 2 ** (retry.attempts - 1), 300_000);
-        cleanupRetries.set(environmentId, retry);
-        if (retry.attempts >= 10 || options.now() - retry.startedAtMs >= 3_600_000) {
-          parkCleanup(current, retry);
-        } else if (!explicit) {
-          options.warn(
-            `Conversation environment cleanup will retry (${environmentId}): ${retry.lastError}`,
-          );
-        }
+        const previous = cleanupRetry(record);
         if (explicit) {
-          throw error;
+          cleanupRetries.delete(environmentId);
+        } else if (previous) {
+          if (options.now() - previous.startedAtMs >= 3_600_000) {
+            parkCleanup(record, previous);
+          }
+          if (previous.parked || options.now() < previous.nextAttemptAtMs) {
+            return undefined;
+          }
         }
-        return undefined;
-      }
-    });
+        const retry = (!explicit && previous) || {
+          ownerEpoch: record.ownerEpoch,
+          leaseId: record.leaseId,
+          startedAtMs: options.now(),
+          attempts: 0,
+          nextAttemptAtMs: 0,
+          lastError: "",
+        };
+        retry.attempts += 1;
+        try {
+          const stopped = await providerLifecycle.destroy(environmentId, {
+            requireUnattached: true,
+            onAccepted,
+          });
+          if (
+            stopped.state !== "destroyed" &&
+            !(stopped.state === "failed" && stopped.leaseId === null)
+          ) {
+            throw new Error(
+              `Conversation environment cleanup is not confirmed (${stopped.state}); the existing lease remains owned`,
+            );
+          }
+          cleanupRetries.delete(environmentId);
+          return stopped;
+        } catch (error) {
+          const current = store.get(environmentId)!;
+          retry.ownerEpoch = current.ownerEpoch;
+          retry.leaseId = current.leaseId;
+          retry.lastError = boundedWorkerError(error);
+          retry.nextAttemptAtMs =
+            options.now() + Math.min(30_000 * 2 ** (retry.attempts - 1), 300_000);
+          cleanupRetries.set(environmentId, retry);
+          if (retry.attempts >= 10 || options.now() - retry.startedAtMs >= 3_600_000) {
+            parkCleanup(current, retry);
+          } else if (!explicit) {
+            options.warn(
+              `Conversation environment cleanup will retry (${environmentId}): ${retry.lastError}`,
+            );
+          }
+          if (explicit) {
+            throw error;
+          }
+          return undefined;
+        }
+      });
+    return explicit ? options.awaitTeardownAdmission(run) : run();
+  };
   const currentSession = (identity: WorkerEnvironmentSessionIdentity) => {
     const target = resolveSessionEntryAccessTarget({
       cfg: options.getConfig(),

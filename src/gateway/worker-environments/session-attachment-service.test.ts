@@ -9,6 +9,8 @@ import {
   ensureSessionEntrySync,
   replaceSessionEntrySync,
 } from "../../config/sessions/session-accessor.js";
+import { racePromiseWithAbortSignal } from "../../infra/abort-signal.js";
+import type { WorkerProvider } from "../../plugins/types.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import { closeOpenClawAgentDatabases } from "../../state/openclaw-agent-db-lifecycle.js";
 import { createGatewayPortalService } from "../portals/portal-service.js";
@@ -562,7 +564,9 @@ describe("conversation-owned temporary environments", () => {
     }
   });
 
-  it("closes authorization before waiting for provider teardown and requires a fresh key for a replacement", async () => {
+  it("closes authorization before waiting for provider teardown and requires a fresh key for a replacement", async ({
+    signal,
+  }) => {
     const stopped = createDeferredCore();
     const destroy = vi.fn(async () => await stopped.promise);
     let allocations = 0;
@@ -576,8 +580,14 @@ describe("conversation-owned temporary environments", () => {
     const teardown = service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize);
     expect(service.findSessionAttachment(identity)).toBeUndefined();
     expect(() => service.assertSessionAttachment(created.attachment)).toThrow("no longer current");
-    stopped.resolve();
-    await teardown;
+    try {
+      expect(await racePromiseWithAbortSignal(teardown, signal)).toMatchObject({
+        state: "destroying",
+      });
+    } finally {
+      stopped.resolve();
+    }
+    await service.reconcileSessionAttachments();
     expect(service.get(created.attachment.environmentId)?.state).toBe("destroyed");
     await expect(service.createSessionAttachment(request, authorize)).rejects.toThrow(
       "already stopped",
@@ -604,7 +614,8 @@ describe("conversation-owned temporary environments", () => {
     );
     await expect(
       service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize),
-    ).rejects.toThrow(firstCleanupFailure);
+    ).resolves.toMatchObject({ state: "destroying" });
+    await service.reconcileSessionAttachments();
     const environmentId = service.getSessionAttachmentStatus(identity.sessionId)!.environment
       .environmentId;
     const pending = support.testState.store.get(environmentId)!;
@@ -614,7 +625,10 @@ describe("conversation-owned temporary environments", () => {
       teardownTerminalState: "failed",
       lastError: originalFailure,
     });
-    expect(warn).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      `Worker environment teardown failed: ${firstCleanupFailure}`,
+    );
+    warn.mockClear();
     const secret = `synthetic-cleanup-auth-${"x".repeat(48)}`;
     const currentDiagnosis = "provider stop timed out while confirming release";
     destroy.mockRejectedValue(
@@ -661,7 +675,12 @@ describe("conversation-owned temporary environments", () => {
     const created = await service.createSessionAttachment(request, authorize);
     await expect(
       service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize),
-    ).rejects.toThrow("http 503");
+    ).resolves.toMatchObject({ state: "destroying" });
+    await service.reconcileSessionAttachments();
+    expect(warn).toHaveBeenCalledExactlyOnceWith(
+      "Worker environment teardown failed: coordinator release: http 503",
+    );
+    warn.mockClear();
     for (let sweep = 0; sweep < 95; sweep += 1) {
       support.testState.nowMs += 150_000;
       await service.reconcileOnce();
@@ -719,7 +738,12 @@ describe("conversation-owned temporary environments", () => {
       const created = await service.createSessionAttachment(request, authorize);
       await expect(
         service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize),
-      ).rejects.toThrow("http 404");
+      ).resolves.toMatchObject({ state: "destroying" });
+      await service.reconcileSessionAttachments();
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        "Worker environment teardown failed: stop outcome unknown: http 404",
+      );
+      warn.mockClear();
       support.testState.nowMs += 3_600_000;
       await service.reconcileOnce();
       await service.reconcileOnce();
@@ -733,6 +757,7 @@ describe("conversation-owned temporary environments", () => {
         await service.reconcileOnce();
       } else {
         await service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize);
+        await service.reconcileSessionAttachments();
       }
       expect(destroy).toHaveBeenCalledTimes(2);
       expect(service.get(created.attachment.environmentId)).toMatchObject({ state: "destroyed" });
@@ -749,6 +774,8 @@ describe("conversation-owned temporary environments", () => {
     await expect(
       service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize),
     ).rejects.toThrow("cleanup is not confirmed (orphaned)");
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockClear();
     support.testState.nowMs += 3_600_000;
     for (let sweep = 0; sweep < 3; sweep += 1) {
       await service.reconcileSessionAttachments();
@@ -761,13 +788,46 @@ describe("conversation-owned temporary environments", () => {
     expect(warn).toHaveBeenCalledOnce();
   });
 
-  it("retains a failed cleanup owner and forbids replacement until provider destruction is confirmed", async () => {
-    const destroy = vi.fn().mockRejectedValue(new Error("provider unavailable"));
+  it("retains the accepted Stop's retry budget and forbids replacement until provider destruction is confirmed", async ({
+    signal,
+  }) => {
+    const capturing = createDeferredCore();
+    const finishCapture = createDeferredCore();
+    const failureCommitted = createDeferredCore();
+    const recordError = support.testState.store.recordError.bind(support.testState.store);
+    vi.spyOn(support.testState.store, "recordError").mockImplementation(async (input) => {
+      const record = await recordError(input);
+      failureCommitted.resolve();
+      return record;
+    });
+    const destroy = vi.fn<WorkerProvider["destroy"]>(async (_lease, options) => {
+      options?.onPhase?.("capturing");
+      capturing.resolve();
+      await racePromiseWithAbortSignal(finishCapture.promise, signal);
+      options?.onPhase?.("stopping");
+      throw new Error("provider unavailable");
+    });
     const service = support.createService(support.createProvider({ destroy }));
     const created = await service.createSessionAttachment(request, authorize);
-    await expect(
-      service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize),
-    ).rejects.toThrow("provider unavailable");
+    try {
+      const accepted = await racePromiseWithAbortSignal(
+        service.destroySessionAttachment({ sessionId: identity.sessionId }, authorize),
+        signal,
+      );
+      await racePromiseWithAbortSignal(capturing.promise, signal);
+      expect(accepted).toMatchObject({ state: "destroying" });
+      expect(service.get(created.attachment.environmentId)?.teardownPhase).toBe("capturing");
+      expect(destroy).toHaveBeenCalledOnce();
+    } finally {
+      finishCapture.resolve();
+    }
+    await racePromiseWithAbortSignal(failureCommitted.promise, signal);
+    await service.reconcileSessionAttachments();
+    expect(service.get(created.attachment.environmentId)).toMatchObject({
+      state: "destroying",
+      error: "provider unavailable",
+    });
+    expect(destroy).toHaveBeenCalledOnce();
     await expect(
       service.createSessionAttachment({ ...request, idempotencyKey: "replacement" }, authorize),
     ).rejects.toThrow("already owns");

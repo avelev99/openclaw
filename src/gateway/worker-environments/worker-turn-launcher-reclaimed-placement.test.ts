@@ -142,7 +142,7 @@ describe("worker turn launcher reclaimed placement", () => {
         }),
       ),
       stopTunnel: vi.fn(async () => {}),
-      destroy: vi.fn(async () => attachedEnvironment()),
+      requestDestroy: vi.fn(async () => attachedEnvironment()),
     };
     const provider = createWorkerSessionTurnPlacementProvider({
       environments,

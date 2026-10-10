@@ -52,7 +52,7 @@ export function createWorkerPlacementMoveAbandonment(
           ? { sessionId, ownerEpoch: environment.ownerEpoch }
           : undefined;
       try {
-        return await environments.destroy(environmentId, abandonment, async () => {
+        return await environments.requestDestroy(environmentId, abandonment, async () => {
           await forceAbandonWorkerEnvironment({
             placements,
             environmentId,
@@ -163,7 +163,7 @@ export function createWorkerPlacementMoveAbandonment(
         assertCurrent();
       }
       if (environments.get(intent.source.environmentId)) {
-        await environments.destroy(intent.source.environmentId, {
+        await environments.requestDestroy(intent.source.environmentId, {
           sessionId: intent.sessionId,
           ownerEpoch: intent.source.ownerEpoch,
           authorize: assertCurrent,

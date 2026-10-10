@@ -510,7 +510,7 @@ export function unusedEnvironments(): WorkerTurnEnvironmentService {
     stopTunnel: vi.fn(async () => {
       throw unexpected();
     }),
-    destroy: vi.fn(async () => {
+    requestDestroy: vi.fn(async () => {
       throw unexpected();
     }),
   };

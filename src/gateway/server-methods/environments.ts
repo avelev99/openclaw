@@ -447,16 +447,18 @@ export const environmentsHandlers: GatewayRequestHandlers = {
             );
           })
         : await service.destroyUnattached(params.environmentId);
-      // Destruction is authoritative. Project the dead worker into its owning
-      // placement before returning, or immediate session deletion stays fenced.
-      try {
-        await context.workerPlacementDispatchService?.reconcileActive?.(params.environmentId);
-      } catch (error) {
-        // The provider mutation has committed. Keep its success authoritative;
-        // the periodic recovery sweep will retry this projection.
-        context.logGateway.warn(
-          `worker placement reconciliation after destroy failed: ${formatForLog(error)}`,
-        );
+      // Only confirmed release needs terminal projection here. Accepted teardown
+      // stays with the environment owner and must not hold this RPC open.
+      if (destroyed.state === "destroyed" || (destroyed.state === "failed" && !destroyed.leaseId)) {
+        try {
+          await context.workerPlacementDispatchService?.reconcileActive?.(params.environmentId);
+        } catch (error) {
+          // The provider mutation has committed. Keep its success authoritative;
+          // the periodic recovery sweep will retry this projection.
+          context.logGateway.warn(
+            `worker placement reconciliation after destroy failed: ${formatForLog(error)}`,
+          );
+        }
       }
       return summarizeWorkerEnvironment(destroyed);
     },

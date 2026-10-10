@@ -86,10 +86,10 @@ describe("worker environment service", () => {
 
     expect(inspect).not.toHaveBeenCalled();
     expect(support.testState.bootstrapWorker).not.toHaveBeenCalled();
-    expect(destroy).toHaveBeenCalledWith({
-      leaseId: `lease:${environmentId}`,
-      profile: { region: "test" },
-    });
+    expect(destroy).toHaveBeenCalledWith(
+      { leaseId: `lease:${environmentId}`, profile: { region: "test" } },
+      { onPhase: expect.any(Function) },
+    );
     expect(support.testState.store.get(environmentId)).toMatchObject({
       state: "failed",
       leaseId: null,
@@ -155,7 +155,10 @@ describe("worker environment service", () => {
     await workerService.reconcileOnce();
 
     expect(inspect).not.toHaveBeenCalled();
-    expect(destroy).toHaveBeenCalledWith({ leaseId, profile: { region: "test" } });
+    expect(destroy).toHaveBeenCalledWith(
+      { leaseId, profile: { region: "test" } },
+      { onPhase: expect.any(Function) },
+    );
     expect(support.testState.store.get(environment.environmentId)).toMatchObject({
       state: "failed",
       leaseId: null,
@@ -195,7 +198,10 @@ describe("worker environment service", () => {
       await workerService.reconcileOnce();
 
       expect(inspect).not.toHaveBeenCalled();
-      expect(destroy).toHaveBeenCalledWith({ leaseId, profile: { region: "test" } });
+      expect(destroy).toHaveBeenCalledWith(
+        { leaseId, profile: { region: "test" } },
+        { onPhase: expect.any(Function) },
+      );
       expect(support.testState.store.get(environment.environmentId)).toMatchObject({
         state: "failed",
         leaseId: null,
@@ -422,10 +428,10 @@ describe("worker environment service", () => {
         .reconcileOnce();
 
       expect(order).toEqual(["tunnel-stop", "provider-destroy"]);
-      expect(destroy).toHaveBeenCalledWith({
-        leaseId: `lease:${environmentId}`,
-        profile: { region: "test" },
-      });
+      expect(destroy).toHaveBeenCalledWith(
+        { leaseId: `lease:${environmentId}`, profile: { region: "test" } },
+        { onPhase: expect.any(Function) },
+      );
       expect(support.testState.store.get(environmentId)).toMatchObject({
         state: "failed",
         leaseId: null,

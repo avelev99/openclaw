@@ -112,7 +112,7 @@ it("accepts an interrupted worker's completed edit before a fresh turn reuses it
     acknowledgeCredentialDelivery: async () => true,
     startTunnel: async () => tunnel,
     stopTunnel: vi.fn(async () => {}),
-    destroy: vi.fn(async () => environment),
+    requestDestroy: vi.fn(async () => environment),
   };
   const resolveWorkspace = async () => ({ kind: "local" as const, path: accepted });
   const execute = async (store: typeof placements, runId: string) => {
@@ -167,6 +167,7 @@ it("accepts an interrupted worker's completed edit before a fresh turn reuses it
       placements: recovered,
       environments: {
         ...environments,
+        destroy: environments.requestDestroy,
         fenceWorkerTurnForRecovery: unexpected,
         reconcileEnvironment: async () => {},
         reconcileOnce: async () => {},
@@ -208,7 +209,7 @@ it("accepts an interrupted worker's completed edit before a fresh turn reuses it
       "fresh turn read the retained edit",
     );
     expect(launchTurn).toHaveBeenCalledTimes(2);
-    expect(environments.destroy).not.toHaveBeenCalled();
+    expect(environments.requestDestroy).not.toHaveBeenCalled();
   } finally {
     finish.resolve();
     await attempt;

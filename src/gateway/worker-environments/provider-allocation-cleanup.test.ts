@@ -291,10 +291,10 @@ describe("worker allocation cleanup", () => {
         { region: "test" },
         pending.provisionOperationId,
       );
-      expect(destroy).toHaveBeenCalledExactlyOnceWith({
-        leaseId: "operation-cleanup",
-        profile: { region: "test" },
-      });
+      expect(destroy).toHaveBeenCalledExactlyOnceWith(
+        { leaseId: "operation-cleanup", profile: { region: "test" } },
+        { onPhase: expect.any(Function) },
+      );
       expect(support.testState.prepareInstallation).not.toHaveBeenCalled();
       expect(support.testState.bootstrapWorker).not.toHaveBeenCalled();
       expect(support.testState.store.getCredential(pending.environmentId)).toBeUndefined();

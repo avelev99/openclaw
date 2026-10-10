@@ -61,6 +61,7 @@ describe("worker inference lifecycle caller", () => {
           prepare: unexpected,
           create: unexpected,
           destroy: unexpected,
+          requestDestroy: unexpected,
           destroyUnattached: unexpected,
           observeDesktop: unexpected,
           launchDesktopApp: unexpected,

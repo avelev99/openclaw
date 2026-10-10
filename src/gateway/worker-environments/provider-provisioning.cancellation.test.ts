@@ -646,10 +646,10 @@ describe("worker provisioning cancellation ownership", () => {
       let shutdownSettled = false;
       try {
         await support.waitForFast(() => expect(settled).toBe(true));
-        expect(destroy).toHaveBeenCalledExactlyOnceWith({
-          leaseId: "lease-replayed",
-          profile: { region: "test" },
-        });
+        expect(destroy).toHaveBeenCalledExactlyOnceWith(
+          { leaseId: "lease-replayed", profile: { region: "test" } },
+          { onPhase: expect.any(Function) },
+        );
         expect(support.testState.store.list()[0]).toMatchObject({
           state: "destroyed",
           leaseId: "lease-replayed",

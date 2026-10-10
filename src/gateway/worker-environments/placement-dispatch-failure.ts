@@ -103,6 +103,7 @@ export type WorkerDispatchEnvironmentService = Pick<
   | "schedulePreparedRefill"
   | "createWithRequest"
   | "destroy"
+  | "requestDestroy"
   | "get"
   | "fenceWorkerTurnForRecovery"
   | "reconcileEnvironment"
@@ -221,7 +222,7 @@ export function createPlacementFailureActions(deps: {
     }
     params.authorize?.();
     try {
-      await environments.destroy(params.environmentId);
+      await environments.requestDestroy(params.environmentId);
     } catch (error) {
       teardownErrors.push(`environment destroy: ${boundedError(error)}`);
     }

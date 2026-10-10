@@ -529,7 +529,7 @@ describe("Crabbox prepared image demand and custody", () => {
           true,
         );
       } else {
-        expect(warn).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining(recorded.capture!.selector));
         expect((await listCrabboxWarmImages(crabboxState))[0]?.capture).toEqual(recorded.capture);
       }
       expect(

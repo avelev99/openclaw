@@ -31,7 +31,7 @@ export function summarizeWorkerEnvironment(
   return {
     id: record.environmentId,
     type: "worker",
-    status: error ? "error" : WORKER_STATUS[record.state],
+    status: error ? "error" : cleanupPending ? "stopping" : WORKER_STATUS[record.state],
     ...(record.sharedHost === null
       ? {}
       : { trust: record.sharedHost ? "persistent" : "disposable" }),
@@ -68,6 +68,7 @@ export function summarizeWorkerEnvironment(
       providerId: record.providerId,
       ...(record.leaseId ? { leaseId: record.leaseId } : {}),
       state: record.state,
+      ...(record.teardownPhase ? { teardownPhase: record.teardownPhase } : {}),
       ...(options.includePreparedDetails && record.destroyRequestedAtMs !== null
         ? { destroyRequestedAtMs: record.destroyRequestedAtMs }
         : {}),

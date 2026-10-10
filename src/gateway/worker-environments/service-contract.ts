@@ -70,6 +70,7 @@ export type WorkerEnvironmentServiceRecord = {
   createdAtMs: number;
   idleSinceAtMs: number | null;
   destroyRequestedAtMs: number | null;
+  teardownPhase?: "capturing" | "stopping";
   attachedSessionIds: readonly string[];
   desktopAvailable: boolean;
   desktopApps: readonly WorkerDesktopApp["id"][];
@@ -179,6 +180,8 @@ export type WorkerEnvironmentServiceContract = {
     runSetupScript?: boolean,
   ): Promise<WorkerEnvironmentServiceRecord>;
   destroy(environmentId: string): Promise<WorkerEnvironmentServiceRecord>;
+  /** Return after durable teardown admission; the environment owner settles the provider. */
+  requestDestroy(environmentId: string): Promise<WorkerEnvironmentServiceRecord>;
   destroyUnattached(environmentId: string): Promise<WorkerEnvironmentServiceRecord>;
   observeDesktop(request: {
     environmentId: string;

@@ -20,13 +20,45 @@ import {
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
 describe("Crabbox capture recovery", () => {
+  it("stops an interrupted capture's lease after restart without capturing twice", async () => {
+    const initial = createWarmProvider(({ argv }) => {
+      if (argv[2] === "create") {
+        return commandResult({ termination: "timeout", code: null, killed: true });
+      }
+      if (argv[1] === "stop") {
+        return commandResult({ code: 7, stderr: "provider unavailable during lease stop" });
+      }
+      return undefined;
+    });
+    const lease = await provisionWarmProfile(initial.provider, PROFILE, "interrupted-teardown");
+    await expect(
+      initial.provider.destroy({ leaseId: lease.leaseId, profile: PROFILE }),
+    ).rejects.toThrow("provider unavailable during lease stop");
+    const capture = (await listCrabboxWarmImages(crabboxState))[0]!.capture!;
+    expect(capture).toMatchObject({ leaseId: lease.leaseId, phase: "uncertain" });
+    await initial.provider.dispose();
+    await closeOpenClawStateDatabaseAsync();
+    resetPluginStateStoreForTests();
+
+    const restarted = createWarmProvider(undefined, initial.stateDir);
+    await restarted.provider.destroy({ leaseId: lease.leaseId, profile: PROFILE });
+    expect(restarted.calls.filter(({ argv }) => argv[1] === "stop")).toHaveLength(1);
+    expect(restarted.calls.some(({ argv }) => argv[2] === "create")).toBe(false);
+    expect((await listCrabboxWarmImages(crabboxState))[0]!.capture).toMatchObject({
+      selector: capture.selector,
+      leaseId: lease.leaseId,
+      phase: "uncertain",
+    });
+    expect(openWarmImageStore().entries()[0]!.value.allocations).not.toHaveProperty(lease.leaseId);
+  });
+
   it.each([
     { phase: "scrub", fails: false },
     { phase: "scrub", fails: true },
     { phase: "create", fails: false },
     { phase: "create", fails: true },
   ])(
-    "keeps an old $phase claim owned during warm reuse and source teardown (fails=$fails)",
+    "keeps an old $phase claim owned during warm reuse and a second teardown (fails=$fails)",
     async ({ phase, fails }) => {
       const entered = createDeferred<void>();
       const release = createDeferred<void>();
@@ -48,6 +80,7 @@ describe("Crabbox capture recovery", () => {
         return undefined;
       });
       await captureWarmImage(initial.provider);
+      const first = await provisionWarmProfile(initial.provider, PROFILE, "first");
       const second = await provisionWarmProfile(initial.provider, PROFILE, "second");
       const now = Date.now();
       const clock = vi.spyOn(Date, "now").mockReturnValue(now);
@@ -58,10 +91,7 @@ describe("Crabbox capture recovery", () => {
         image: { ...image.value.image!, createdAtMs: now - DAY_MS },
       });
       block = true;
-      const capturing = captureWarmImage(initial.provider, PROFILE, "first").then(
-        () => undefined,
-        (error: unknown) => error,
-      );
+      const stopping = initial.provider.destroy({ leaseId: first.leaseId, profile: PROFILE });
       await entered.promise;
       const selector = (await listCrabboxWarmImages(crabboxState))[0]?.capture?.selector;
       try {
@@ -84,8 +114,11 @@ describe("Crabbox capture recovery", () => {
       } finally {
         release.resolve();
       }
-      expect(Boolean(await capturing)).toBe(fails);
+      await stopping;
       expect(initial.calls.some(({ argv }) => argv[1] === "stop")).toBe(true);
+      if (!fails) {
+        expect(initial.calls.at(-1)?.argv[2]).toBe("delete");
+      }
       expect(store.lookup(image.key)?.image?.checkpointId).toBe(
         fails ? CHECKPOINT_ID : "chk_after_delay",
       );
@@ -106,9 +139,7 @@ describe("Crabbox capture recovery", () => {
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now + DAY_MS);
     failCreate = true;
-    await expect(captureWarmImage(initial.provider, PROFILE, "uncertain")).rejects.toThrow(
-      "image capture is unresolved",
-    );
+    await captureWarmImage(initial.provider, PROFILE, "uncertain");
     const selector = (await listCrabboxWarmImages(crabboxState))[0]!.capture!.selector;
     await initial.provider.dispose();
     await closeOpenClawStateDatabaseAsync();
@@ -147,10 +178,9 @@ describe("Crabbox capture recovery", () => {
         ...image.value,
         image: { ...image.value.image!, createdAtMs: Date.now() - DAY_MS },
       });
+      const lease = await provisionWarmProfile(provider, PROFILE, "closed-scrub");
       block = true;
-      const capturing = captureWarmImage(provider, PROFILE, "closed-scrub").catch(
-        (error: unknown) => error,
-      );
+      const stopping = provider.destroy({ leaseId: lease.leaseId, profile: PROFILE });
       await entered.promise;
       try {
         // Simulates the ownership handoff; a closed scrub must never issue create.
@@ -177,7 +207,7 @@ describe("Crabbox capture recovery", () => {
       } finally {
         release.resolve();
       }
-      await capturing;
+      await stopping;
       expect(calls.filter(({ argv }) => argv[2] === "create")).toHaveLength(1);
       expect((await listCrabboxWarmImages(crabboxState))[0]?.capture?.selector).toBe(
         "replacement-generation",

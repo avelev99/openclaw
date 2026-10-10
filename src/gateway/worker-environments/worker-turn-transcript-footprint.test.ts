@@ -131,7 +131,7 @@ describe("Gateway worker-turn selected transcript preparation", () => {
           tunnelCalls++;
           throw new Error("Fixture must stop before tunnel creation");
         },
-        destroy: async () => {
+        requestDestroy: async () => {
           destroyCalls++;
           throw new Error("Pre-launch refusal must preserve the active placement");
         },

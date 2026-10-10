@@ -18,7 +18,11 @@ import { readWorkerProjectSnapshot } from "./project-preparation.js";
 import type { WorkerProviderLifecycleInputOptions } from "./provider-lifecycle.types.js";
 import { WorkerRuntimeRefreshPendingError } from "./provider-runtime-refresh.js";
 import { prepareRepositoryWorkerProjectSource } from "./repository-project-admission.js";
-import type { WorkerDesktopLaunchResult, WorkerDesktopObserveResult } from "./service-contract.js";
+import type {
+  WorkerDesktopLaunchResult,
+  WorkerDesktopObserveResult,
+  WorkerEnvironmentServiceRecord,
+} from "./service-contract.js";
 import type { WorkerEnvironmentRecord, WorkerEnvironmentStore } from "./store.js";
 import {
   joinWorkerTunnelStops,
@@ -69,6 +73,7 @@ export function createWorkerEnvironmentTransportLifecycle(options: {
 type WorkerEnvironmentAccessOptions = {
   store: WorkerEnvironmentStore;
   getCleanupError: (record: WorkerEnvironmentRecord) => string | undefined;
+  getTeardownPhase?: (environmentId: string) => WorkerEnvironmentServiceRecord["teardownPhase"];
   getConfig: () => OpenClawConfig;
   projectNamespace?: string;
   prepareCurrentBundle: () => Promise<ExpectedWorkerBuild>;
@@ -137,6 +142,7 @@ export function createWorkerEnvironmentAccess(options: WorkerEnvironmentAccessOp
 
   const project = (record: WorkerEnvironmentRecord) => {
     const cleanupError = options.getCleanupError(record);
+    const teardownPhase = options.getTeardownPhase?.(record.environmentId);
     const desktopAvailable =
       options.getConfig().cloudWorkers?.desktop === true &&
       ["ready", "idle", "attached"].includes(record.state) &&
@@ -152,6 +158,7 @@ export function createWorkerEnvironmentAccess(options: WorkerEnvironmentAccessOp
       : undefined;
     return {
       ...record,
+      ...(teardownPhase ? { teardownPhase } : {}),
       ...workerInferenceMetadata(record),
       ...(record.preparation && preparedProject
         ? {

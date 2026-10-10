@@ -428,7 +428,10 @@ export function createHarness(
         return destroyed;
       },
     ),
-    requestDestroy: (requestedEnvironmentId) => environments.destroy(requestedEnvironmentId),
+    requestDestroy: async (...args) => {
+      await environments.stopTunnel(args[0]);
+      return environments.destroy(...args);
+    },
     reconcileOnce: vi.fn(async () => {
       log.push("environment:reconcile");
     }),

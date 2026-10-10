@@ -1185,7 +1185,7 @@ describe("Crabbox worker provider", () => {
       calls.push(argv);
       return commandResult({ stdout: argv[1] === "inspect" ? inspectJson() : "" });
     });
-    await provider.provision(PROFILE, OPERATION_ID, {
+    await provider.provision({ ...CLASSLESS_PROFILE, class: "standard" }, OPERATION_ID, {
       machineClass: "c7a.24xlarge",
     });
     const warmup = calls.find((argv) => argv[1] === "warmup")!;

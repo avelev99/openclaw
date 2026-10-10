@@ -109,12 +109,13 @@ describe("Crabbox durable allocation admission", () => {
       const owner = manager();
       const source = context("cbx_source");
       await owner.allocate(source);
-      await owner.capture(source);
       await owner.markEnrolled(source.id);
+      await owner.capture(source);
       await owner.release(source);
       const next = context("cbx_next");
       if (phase === "capture") {
         await owner.allocate(next);
+        await owner.markEnrolled(next.id);
       }
       const store = openWarmImageStore();
       const image = store.entries()[0]!.value.image!;
@@ -159,8 +160,8 @@ describe("Crabbox durable allocation admission", () => {
       const owner = manager();
       const source = context("cbx_source");
       await owner.allocate(source);
-      await owner.capture(source);
       await owner.markEnrolled(source.id);
+      await owner.capture(source);
       await owner.release(source);
       const store = openWarmImageStore();
       const entry = store.entries()[0]!;
@@ -210,8 +211,8 @@ describe("Crabbox durable allocation admission", () => {
     const owner = manager();
     const source = context("cbx_source");
     await owner.allocate(source);
-    await owner.capture(source);
     await owner.markEnrolled(source.id);
+    await owner.capture(source);
     await owner.release(source);
     const pinnedAtMs = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(pinnedAtMs);
@@ -219,6 +220,7 @@ describe("Crabbox durable allocation admission", () => {
     clock.mockReturnValue(pinnedAtMs + 2 * 86_400_000);
     const next = context("cbx_next");
     expect(await owner.allocate(next)).toEqual({ kind: "checkpoint", checkpointId: CHECKPOINT_ID });
+    await owner.markEnrolled(next.id);
     calls.length = 0;
     expect(await owner.capture(next)).toBe(false);
     expect(calls.some((argv) => argv[2] === "create" || argv[2] === "delete")).toBe(false);
@@ -242,11 +244,12 @@ describe("Crabbox durable allocation admission", () => {
     const now = Date.now();
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     await owner.allocate(source);
-    await owner.capture(source);
     await owner.markEnrolled(source.id);
+    await owner.capture(source);
     await owner.release(source);
     const next = context("cbx_next");
     await owner.allocate(next);
+    await owner.markEnrolled(next.id);
     calls.length = 0;
     clock.mockReturnValue(now + 3_600_000 - 1);
     expect(await owner.capture(next)).toBe(false);
@@ -370,8 +373,8 @@ describe("Crabbox durable allocation admission", () => {
     const owner = manager();
     const source = context("cbx_source");
     await owner.allocate(source);
-    await owner.capture(source);
     await owner.markEnrolled(source.id);
+    await owner.capture(source);
     await owner.release(source);
     const borrower = context("cbx_borrower");
     await owner.allocate(borrower);
@@ -381,6 +384,7 @@ describe("Crabbox durable allocation admission", () => {
         nodeRuntimeIdentity: { ...NODE_RUNTIME_IDENTITY, nodeBootstrapSha256: digest.repeat(64) },
       };
       await owner.allocate(next);
+      await owner.markEnrolled(next.id);
       expect(await owner.capture(next)).toBe(true);
       await owner.release(next);
       expect(openWarmImageStore().entries()[0]?.value.previous?.checkpointId).toBe(
@@ -588,8 +592,9 @@ describe("Crabbox durable allocation admission", () => {
       const older = context("cbx_older");
       await owner.allocate(initial);
       await owner.allocate(older);
-      await owner.capture(initial);
       await owner.markEnrolled(initial.id);
+      await owner.markEnrolled(older.id);
+      await owner.capture(initial);
       await owner.release(initial);
       const newer = {
         ...context("cbx_newer"),
@@ -599,8 +604,8 @@ describe("Crabbox durable allocation admission", () => {
         kind: "checkpoint",
         checkpointId: CHECKPOINT_ID,
       });
-      expect(await owner.capture(newer)).toBe(true);
       await owner.markEnrolled(newer.id);
+      expect(await owner.capture(newer)).toBe(true);
       await owner.release(newer);
       const published = structuredClone(openWarmImageStore().entries()[0]!.value);
       expect(published.image?.runtimeIdentity).toEqual(newer.nodeRuntimeIdentity);
@@ -653,14 +658,15 @@ describe("Crabbox durable allocation admission", () => {
     const owner = manager();
     const original = context("cbx_original");
     await owner.allocate(original);
-    await owner.capture(original);
     await owner.markEnrolled(original.id);
+    await owner.capture(original);
     await owner.release(original);
     const legacy = openWarmImageStore().entries()[0]!;
     delete legacy.value.image!.runtimeIdentity;
     openWarmImageStore().register(legacy.key, legacy.value);
     const next = context("cbx_next");
     expect(await owner.allocate(next)).toEqual({ kind: "checkpoint", checkpointId: CHECKPOINT_ID });
+    await owner.markEnrolled(next.id);
     expect(await owner.capture(next)).toBe(true);
     expect(openWarmImageStore().entries()[0]!.value.image?.runtimeIdentity).toEqual(
       NODE_RUNTIME_IDENTITY,

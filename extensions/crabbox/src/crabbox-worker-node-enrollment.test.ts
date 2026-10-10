@@ -381,8 +381,8 @@ describe.skipIf(process.platform === "win32")("source node bootstrap", () => {
     await expectSetupPhases(
       enroll(homes.get(initial.id)!, oldArtifact.nodeBootstrap, undefined, true),
     );
-    expect(await manager.capture(initial)).toBe(true);
     await manager.markEnrolled(initial.id);
+    expect(await manager.capture(initial)).toBe(true);
     await manager.release(initial);
     fs.rmSync(homes.get(initial.id)!, { recursive: true });
     const originalCheckpoint = (await openCrabboxWarmImageStore(crabboxState).entries())[0]!.value
@@ -402,8 +402,8 @@ describe.skipIf(process.platform === "win32")("source node bootstrap", () => {
         path.join(runtimeRoot(homes.get(upgraded.id)!), currentArtifact.nodeBootstrap.sha256),
       ),
     ).toBe(true);
-    const refreshed = await manager.capture(upgraded);
     await manager.markEnrolled(upgraded.id);
+    const refreshed = await manager.capture(upgraded);
     await manager.release(upgraded);
     fs.rmSync(homes.get(upgraded.id)!, { recursive: true });
     const retainedCheckpoint = (await openCrabboxWarmImageStore(crabboxState).entries())[0]!.value

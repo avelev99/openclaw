@@ -14,7 +14,7 @@ export type WorkerTurnEnvironmentService = Pick<
   WorkerEnvironmentService,
   | "acknowledgeCredentialDelivery"
   | "acquireTurnCredential"
-  | "destroy"
+  | "requestDestroy"
   | "get"
   | "startTunnel"
   | "stopTunnel"
@@ -172,7 +172,7 @@ export async function failHandedOffTurn(params: {
       "tunnel stop",
       () => params.environments.stopTunnel(draining.environmentId, draining.activeOwnerEpoch),
     ],
-    ["environment destroy", () => params.environments.destroy(draining.environmentId)],
+    ["environment destroy", () => params.environments.requestDestroy(draining.environmentId)],
   ] as const) {
     // Recovery or replacement may have closed this drain while cleanup awaited.
     if (!isCurrentDrain()) {

@@ -41,6 +41,7 @@ export function createWorkerProviderOwnerLifecycle(
     | "saveError"
     | "withLock"
     | "isStopping"
+    | "onTeardownPhase"
   > & {
     providerFor: (providerId: string) => WorkerProvider;
     onOwnerStopped?: (environmentId: string) => void;
@@ -175,7 +176,24 @@ export function createWorkerProviderOwnerLifecycle(
       () => {
         // An earlier timed-out operation can keep this call queued across owner changes.
         requireCurrentOwner(record);
-        return provider.destroy(lease);
+        let open = true;
+        return provider
+          .destroy(lease, {
+            onPhase: (phase) => {
+              const current = store.get(record.environmentId);
+              if (
+                open &&
+                current?.ownerEpoch === record.ownerEpoch &&
+                current.destroyRequestedAtMs !== null
+              ) {
+                options.onTeardownPhase(record.environmentId, phase);
+              }
+            },
+          })
+          .finally(() => {
+            open = false;
+            options.onTeardownPhase(record.environmentId, undefined);
+          });
       },
       timeoutMs,
     );
@@ -183,7 +201,9 @@ export function createWorkerProviderOwnerLifecycle(
 
   const beginDrain = async (record: WorkerEnvironmentRecord) => {
     const failurePatch =
-      record.teardownTerminalState === "failed" ? { lastError: record.lastError } : undefined;
+      record.teardownTerminalState === "failed" || hasForcedWorkerEnvironmentAbandonment(record)
+        ? { lastError: record.lastError }
+        : undefined;
     return ["bootstrapping", "ready", "attached", "idle"].includes(record.state)
       ? move(record, "draining", failurePatch)
       : record;
@@ -191,7 +211,9 @@ export function createWorkerProviderOwnerLifecycle(
 
   const beginDestroy = async (record: WorkerEnvironmentRecord) => {
     const failurePatch =
-      record.teardownTerminalState === "failed" ? { lastError: record.lastError } : undefined;
+      record.teardownTerminalState === "failed" || hasForcedWorkerEnvironmentAbandonment(record)
+        ? { lastError: record.lastError }
+        : undefined;
     const draining = await beginDrain(record);
     if (draining.state === "draining") {
       return move(draining, "destroying", failurePatch);
@@ -302,7 +324,11 @@ export function createWorkerProviderOwnerLifecycle(
     );
   };
 
-  const finishDestroy = async (record: WorkerEnvironmentRecord, provider?: WorkerProvider) => {
+  const finishDestroy = async (
+    record: WorkerEnvironmentRecord,
+    provider?: WorkerProvider,
+    onAccepted?: (record: WorkerEnvironmentRecord) => void,
+  ) => {
     let r = record;
     if (r.state === "requested") {
       return move(requireCurrentOwner(r), "failed", {
@@ -338,16 +364,21 @@ export function createWorkerProviderOwnerLifecycle(
     // A dedicated provider's destroy result proves physical teardown even if its node is
     // offline. Shared hosts retain the machine, so they still require the exact worker stop.
     const providerOwnsMachine = r.nodeDeviceId !== null && r.sharedHost === false;
-    const destroying = providerOwnsMachine ? r : await beginDestroy(r);
+    const destroying = await beginDestroy(r);
+    onAccepted?.(destroying);
     try {
       await destroyLease(destroying, owningProvider, lifecycleLease(destroying, leaseId));
     } catch (error) {
       await saveError(requireCurrentOwner(destroying), error);
       throw serviceError("provider_failure", boundedWorkerError(error));
     }
-    return await finishProvenDestroy(
-      providerOwnsMachine ? await stopOwner(destroying, "provider-destroyed") : destroying,
-    );
+    if (providerOwnsMachine) {
+      // Draining advances the epoch. Confirm every retired local scope only after
+      // the dedicated machine is gone; destroy intent forbids a replacement owner.
+      requireCurrentOwner(destroying);
+      await tunnels?.stop(destroying.environmentId, undefined, "provider-destroyed");
+    }
+    return await finishProvenDestroy(destroying);
   };
 
   const destroy = async (
@@ -357,10 +388,27 @@ export function createWorkerProviderOwnerLifecycle(
       abandonment?: WorkerEnvironmentAbandonment;
       forceAbandon?: () => Promise<void>;
       retryRequested?: boolean;
+      onAccepted?: (record: WorkerEnvironmentRecord) => void;
     } = {},
   ) => {
     if (options.isStopping()) {
       throw serviceError("invalid_state", "Worker environment service is stopping");
+    }
+    if (
+      destroyOptions.onAccepted &&
+      destroyOptions.retryRequested === false &&
+      !destroyOptions.abandonment &&
+      !destroyOptions.forceAbandon
+    ) {
+      await store.ready();
+      const pending = store.get(environmentId);
+      if (
+        pending?.destroyRequestedAtMs != null &&
+        ["destroying", "destroyed"].includes(pending.state) &&
+        (!destroyOptions.requireUnattached || pending.attachedSessionIds.length === 0)
+      ) {
+        return pending;
+      }
     }
     return withLock(environmentId, async () => {
       await store.ready();
@@ -439,7 +487,7 @@ export function createWorkerProviderOwnerLifecycle(
       // Persist the operator's discard decision before placement draining can survive a crash.
       await destroyOptions.forceAbandon?.();
       try {
-        const destroyed = await finishDestroy(record);
+        const destroyed = await finishDestroy(record, undefined, destroyOptions.onAccepted);
         abandonment?.authorize?.();
         return destroyed;
       } catch (error) {

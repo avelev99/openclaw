@@ -424,7 +424,7 @@ describe("worker pre-launch claim recovery", () => {
           };
         },
       }),
-      destroy,
+      requestDestroy: destroy,
     };
     const redispatchPlacement = createWorkerPlacementRedispatch({
       placements,
@@ -638,7 +638,7 @@ describe("worker pre-launch claim recovery", () => {
         const pending = (await placements.listPendingWorkspaceResultsAsync())[0]!;
         expect(pending.claimId).toBe(oldClaim?.claimId);
         expect(pending.recoveryRequestedAtMs).not.toBeNull();
-        expect(environments.destroy).not.toHaveBeenCalled();
+        expect(environments.requestDestroy).not.toHaveBeenCalled();
         return;
       }
       // Read-only and queued gates remain closed; entered writes/dispatches had to join.
@@ -665,7 +665,7 @@ describe("worker pre-launch claim recovery", () => {
       }
       expect(placements.get(SESSION_ID)?.turnClaim).toEqual(replacement);
       expect(launch).toHaveBeenCalledTimes(dispatched ? 2 : 1);
-      expect(environments.destroy).not.toHaveBeenCalled();
+      expect(environments.requestDestroy).not.toHaveBeenCalled();
       third.preparedRunAdmission.close();
     } finally {
       vi.useRealTimers();

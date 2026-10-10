@@ -155,7 +155,7 @@ async function launchProbe(
       return tunnel;
     },
     stopTunnel: async () => {},
-    destroy: unexpected,
+    requestDestroy: unexpected,
   };
   const provider = createWorkerSessionTurnPlacementProvider({
     environments,

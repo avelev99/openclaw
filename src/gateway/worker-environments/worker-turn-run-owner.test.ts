@@ -92,7 +92,7 @@ describe("cloud worker run ownership", () => {
           },
         }),
         stopTunnel: vi.fn(),
-        destroy: vi.fn(async () => attachedEnvironment()),
+        requestDestroy: vi.fn(async () => attachedEnvironment()),
       };
       const provider = createWorkerSessionTurnPlacementProvider({ environments, placements });
       const operation = createReplyOperation({
@@ -243,7 +243,7 @@ describe("cloud worker run ownership", () => {
         expect(
           getDiagnosticSessionActivitySnapshot({ sessionId: SESSION_ID }).activeWorkKind,
         ).toBeUndefined();
-        expect(environments.destroy).not.toHaveBeenCalled();
+        expect(environments.requestDestroy).not.toHaveBeenCalled();
       } finally {
         stopGatewayDiagnosticHeartbeat();
         setDiagnosticsEnabledForProcess(previousDiagnostics);

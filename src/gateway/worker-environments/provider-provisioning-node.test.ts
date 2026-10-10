@@ -256,7 +256,10 @@ describe("node worker provider provisioning", () => {
           expect(workerService.get(record.environmentId)?.state).toBe("provisioning");
           teardown = workerService.destroy(record.environmentId);
           await teardown;
-          expect(destroy).toHaveBeenCalledExactlyOnceWith({ leaseId, profile: { region: "test" } });
+          expect(destroy).toHaveBeenCalledExactlyOnceWith(
+            { leaseId, profile: { region: "test" } },
+            { onPhase: expect.any(Function) },
+          );
         }
         expect(prepareInstallation).toHaveBeenCalledOnce();
       } finally {
@@ -709,7 +712,10 @@ describe("node worker provider provisioning", () => {
     expect(generateWorkerCredential).not.toHaveBeenCalled();
     expect(support.testState.store.getCredential(provisioning.environmentId)).toBeUndefined();
     expect(transitions).not.toHaveBeenCalledWith(expect.objectContaining({ to: "ready" }));
-    expect(destroy).toHaveBeenCalledExactlyOnceWith({ leaseId, profile: { region: "test" } });
+    expect(destroy).toHaveBeenCalledExactlyOnceWith(
+      { leaseId, profile: { region: "test" } },
+      { onPhase: expect.any(Function) },
+    );
     expect(retireNodeEnrollment).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({
         state: "destroying",
